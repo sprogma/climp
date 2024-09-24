@@ -1,0 +1,16 @@
+# depslib dependency file v1.0
+1726342246 source:d:\c\git\climp\gpgpu.c
+	"stdio.h"
+	"CL\cl.h"
+	"gpgpu.h"
+
+1726341799 d:\c\git\climp\gpgpu.h
+	"CL/cl.h"
+
+1726350172 source:d:\c\git\climp\main.c
+	<stdio.h>
+	<stdlib.h>
+	<time.h>
+	"CL\cl.h"
+	"mx_phys.h"
+
