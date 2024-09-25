@@ -34,64 +34,6 @@ class jsd(dict):
         return self
 
 
-def basic_sin_interpolation(t):
-    # linear interpolation to sinus interpolation
-    # range from 0 -> l: number b:
-    def f_x(b, l):
-        return int(math.asin(b / l) * l / math.pi * 2 * t + b * (1 - t) - 0.01)
-
-    return f_x
-
-
-def upgraded_sin_interpolation(b, l):
-    # range from 0 -> l: number b:
-    return int(((math.sin((b / l - 1 / 2) * math.pi) + 1) / 2) * l - 0.01)
-
-
-def way_way_bass_boost_interpolation(b, l):
-    # range from 0 -> l: number b:
-    x = b / l
-    return int((
-                       (2680 / 351) * x ** 5 -
-                       (6700 / 351) * x ** 4 +
-                       (51137 / 3510) * x ** 3 -
-                       (19411 / 7020) * x ** 2 +
-                       (1519 / 2340) * x ** 1
-               ) * l - 0.01)
-
-
-def bass_boost_interpolation_pow4(b, l):
-    # range from 0 -> l: number b:
-    x = 1 - b / l
-    return int((
-                       1 - (-1.066666666666 / 16 * (x - 2) ** 4 + 1.066666666666666)
-               ) * l - 0.01)
-
-
-def bass_boost_interpolation_pow2(b, l):
-    # range from 0 -> l: number b:
-    x = 1 - b / l
-    return int((
-                       1 - (-1.3333333333 / 4 * (x - 2) ** 2 + 1.33333333333333)
-               ) * l - 0.01)
-
-
-def bass_boost_interpolation_pow_soft1(b, l):
-    # range from 0 -> l: number b:
-    x = b / l
-    return int((
-            (x ** (3/2) + x) / 2
-               ) * l - 0.01)
-
-
-def bass_boost_interpolation_pow_soft2(b, l):
-    # range from 0 -> l: number b:
-    x = b / l
-    return int((
-            (x ** (5/4) + x) / 2
-               ) * l - 0.01)
-
-
 class Music:
     def __init__(self, path):
         self.sound = pygame.mixer.Sound(path)

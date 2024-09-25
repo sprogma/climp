@@ -13,11 +13,10 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
-					<Add directory="../OCL/bin" />
-					<Add directory="../OCL/include" />
+					<Add directory="../../OCL/include" />
 				</Compiler>
 				<Linker>
-					<Add library="../OCL/bin/OpenCL.dll" />
+					<Add library="../../OCL/bin/OpenCL.dll" />
 				</Linker>
 			</Target>
 			<Target title="Release">
@@ -35,19 +34,16 @@
 		</Build>
 		<Compiler>
 			<Add option="-Wall" />
+			<Add directory="source" />
 		</Compiler>
-		<Unit filename="gpgpu.c">
+		<Unit filename="source/gpgpu.c">
 			<Option compilerVar="CC" />
 		</Unit>
-		<Unit filename="gpgpu.h" />
-		<Unit filename="kernel.cl" />
-		<Unit filename="main.c">
+		<Unit filename="source/gpgpu.h" />
+		<Unit filename="source/kernel.cl" />
+		<Unit filename="source/main.c">
 			<Option compilerVar="CC" />
 		</Unit>
-		<Unit filename="mx_phys.c">
-			<Option compilerVar="CC" />
-		</Unit>
-		<Unit filename="mx_phys.h" />
 		<Extensions>
 			<lib_finder disable_auto="1" />
 		</Extensions>

@@ -614,7 +614,13 @@ class Application:
             if q:
                 ss = ss[:-1]
             s += '*'
-            res = list(pathlib.Path(self.d.path).glob(s))
+            log('info', s)
+            if pathlib.Path(s).is_absolute():
+                log('info', 'A')
+                res = list(pathlib.Path(pathlib.Path(s).anchor).glob(str(pathlib.Path(s).relative_to(pathlib.Path(s).anchor))))
+            else:
+                res = list(pathlib.Path(self.d.path).glob(s))
+            log('info', 'zv')
             if not res:
                 return
             if sh[0] in ('l', 'load'):
@@ -623,7 +629,10 @@ class Application:
                 res.sort(key=lambda x: (0, str(x).lower()) if x.is_dir() else (1, str(x).lower()))
             else:
                 res.sort(key=lambda x: str(x).lower())
-            sh = [str(res[0].relative_to(self.d.path))]
+            try:
+                sh = [str(res[0].relative_to(self.d.path))]
+            except Exception as e:
+                sh = [str(res[0])]
             self.d.console.string = ss + shlex.join(sh)
         except Exception as e:
             log('error', f'happen error at autocomplete ({e})')
@@ -633,12 +642,18 @@ class Application:
             if self.d.list.album is not None:
                 self.lists[self.d.list.album].add(os.path.join(self.d.path, pattern))
         else:
-            r = list(pathlib.Path(self.d.path).glob(pattern))
+            if pathlib.Path(pattern).is_absolute():
+                r = list(pathlib.Path(pathlib.Path(pattern).anchor).glob(str(path.relative_to(pathlib.Path(pattern).anchor))))
+            else:
+                r = list(pathlib.Path(self.d.path).glob(pattern))
             if not r:
-                for ext in ('.mp3', '.waw', '.flac', '.ogg'):
-                    r += list(pathlib.Path(self.d.path).glob(pattern + ext))
+                for ext in ('.mp3', '.waw', '.flac', '.ogg', '.mid'):
+                    if pathlib.Path(pattern).is_absolute():
+                        r += list(pathlib.Path(pathlib.Path(pattern).anchor).glob(str(path.relative_to(pathlib.Path(pattern).anchor)) + ext))
+                    else:
+                        r += list(pathlib.Path(self.d.path).glob(pattern + ext))
             for f in r:
-                self.load_track(os.path.join(self.d.path, f))
+                self.load_track(f)
             if not r:
                 log('error', f'not found "{pattern}" file.')
 
@@ -760,7 +775,7 @@ class Application:
             line += self.d.console.height - len(self.d.console.data)
             text, color = i
             addstr(2 + line, 2, text, color)
-        addstr(self.h - 3, 2, "PS> " + self.d.console.string, c.console.text)
+        addstr(self.h - 3, 2, "MP> " + self.d.console.string, c.console.text)
 
     def events_console_list(self, key):
         if key == 27:  # curses.KEY_ESCAPE
@@ -792,7 +807,7 @@ class Application:
             s = chr(key)
             if s == '\n':
                 # execute
-                log('text', 'PS> ' + self.d.console.string)
+                log('text', 'MP> ' + self.d.console.string)
                 th = ExecutorThread(target=Executor,
                                     args=(self, self.d.console.string, self.d.list.selected[self.d.list.album]),
                                     daemon=True)
