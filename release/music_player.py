@@ -1321,5 +1321,6 @@ if __name__ == "__main__":
         ctypes.c_size_t,
         ctypes.c_int32,
     ]
+    climplib.kernel.restype = ctypes.c_int
     app = Application()
     curses.wrapper(app.run)

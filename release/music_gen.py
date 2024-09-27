@@ -110,10 +110,6 @@ class ProjectTaburlature:
 
     def run(self):
 
-        pygame.init()
-
-
-        clib.kernel.restype = ctypes.c_void_p
 
         MODE_LINEAR = 0
         MODE_FAST = 1
