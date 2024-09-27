@@ -42,3 +42,33 @@
 1726341799 d:\c\git\climp\source\gpgpu.h
 	"CL/cl.h"
 
+1727370275 source:d:\c\git\climp\source\main.c
+	"string.h"
+	"inttypes.h"
+	"stdio.h"
+	"stdlib.h"
+	"stdalign.h"
+	"stdarg.h"
+	"math.h"
+	"CL/cl.h"
+	"climpapi.h"
+	"gpgpu.h"
+	"main.h"
+
+1727295591 d:\c\git\climp\source\main.h
+	<windows.h>
+
+1727370141 source:d:\c\git\climp\source\climpapi.c
+	"string.h"
+	"inttypes.h"
+	"stdio.h"
+	"stdlib.h"
+	"stdalign.h"
+	"stdarg.h"
+	"math.h"
+	"CL/cl.h"
+	"climpapi.h"
+	"gpgpu.h"
+
+1727370136 d:\c\git\climp\source\climpapi.h
+

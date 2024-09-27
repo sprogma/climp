@@ -15,8 +15,12 @@ from random import randint, choice
 import curses
 from curses.textpad import Textbox, rectangle
 from threading import Thread, Lock
+import ctypes
 
 import music_class
+music_gen_path = pathlib.Path(__file__).parent.joinpath('./music_gen.py')
+with open(str(music_gen_path), 'r') as f:
+    exec(f.read())
 
 FREQ = 44100
 pygame.mixer.pre_init(FREQ)
@@ -614,13 +618,10 @@ class Application:
             if q:
                 ss = ss[:-1]
             s += '*'
-            log('info', s)
             if pathlib.Path(s).is_absolute():
-                log('info', 'A')
                 res = list(pathlib.Path(pathlib.Path(s).anchor).glob(str(pathlib.Path(s).relative_to(pathlib.Path(s).anchor))))
             else:
                 res = list(pathlib.Path(self.d.path).glob(s))
-            log('info', 'zv')
             if not res:
                 return
             if sh[0] in ('l', 'load'):
@@ -633,6 +634,7 @@ class Application:
                 sh = [str(res[0].relative_to(self.d.path))]
             except Exception as e:
                 sh = [str(res[0])]
+            self.d.console.autocompleted = True
             self.d.console.string = ss + shlex.join(sh)
         except Exception as e:
             log('error', f'happen error at autocomplete ({e})')
@@ -823,7 +825,12 @@ class Application:
             elif s == '\t':
                 self.autocomplete()
             else:
-                self.d.console.string += chr(key)
+                # insert character
+                if chr(key) == '\\' or chr(key) == '/' and self.d.console.autocompleted and self.d.console.string.rstrip()[-1] in ("'", '"'):
+                    # if autocompleted, it can remove last quote.
+                    self.d.console.string = self.d.console.string.rstrip()[:-1] + chr(key)
+                else:
+                    self.d.console.string += chr(key)
         while self.d.console.string and len(self.d.console.string) > self.lw - 6:
             log("warn", "too long string.")
             self.d.console.string = self.d.console.string[:-1]
@@ -1115,6 +1122,7 @@ class Application:
             data=[],
             string="",
             string_saved="",
+            autocompleted=False,
             height=1,
             stop_execution=False,
             input_function=None,
@@ -1232,6 +1240,7 @@ c = jsd({
 })
 #    END INDEX IS 38, at 'job'
 
+climplib = None
 C_SPECTROGRAM = None
 COL_SPECTROGRAM = None
 COL_SPECTROGRAM_STEPS = None
@@ -1302,5 +1311,15 @@ def init_colors():
 
 
 if __name__ == "__main__":
+    climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+    climplib.kernel.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
+        ctypes.c_size_t,
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=2, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # tools
+        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # start
+        ctypes.c_size_t,
+        ctypes.c_int32,
+    ]
     app = Application()
     curses.wrapper(app.run)

@@ -314,8 +314,7 @@ class MutableMusic(Music):
             new_array[i * block_shift:(i + 1) * block_shift] = list(map(lambda x: x.real, np.fft.ifft(cdata)))
 
         # clip array
-        for i in range(new_array.shape[0]):
-            new_array[i] = min(32767, max(-32768, new_array[i]))
+        new_array.clip(-32767, 32767)
         # duplicate row
         new_array = np.repeat(new_array[:, np.newaxis], 2, axis=1)
         # cast array
