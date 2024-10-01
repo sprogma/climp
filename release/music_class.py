@@ -35,9 +35,13 @@ class jsd(dict):
 
 
 class Music:
-    def __init__(self, path):
-        self.sound = pygame.mixer.Sound(path)
-        self.path = path
+    def __init__(self, path: str | pygame.mixer.Sound):
+        if isinstance(path, str):
+            self.sound = pygame.mixer.Sound(path)
+            self.path = path
+        else:
+            self.sound = path
+            self.path = None
         self.freq = None
         self.array = None
         self.info = None
@@ -47,7 +51,7 @@ class Music:
         self.array = pygame.sndarray.array(self.sound)
 
         self.info = jsd({
-            'title': os.path.basename(self.path),
+            'title': (os.path.basename(self.path) if self.path is not None else 'Generated Samples'),
             'album': "Unknown album",
             'artist': "Unknown artist",
             'autor': "Unknown autor",
@@ -59,7 +63,10 @@ class Music:
         self.get_info()
 
     def get_info(self):
-        ext = os.path.splitext(self.path)[1]
+        if self.path is None:
+            ext = None
+        else:
+            ext = os.path.splitext(self.path)[1]
 
         if ext == ".flac":
             try:
@@ -73,7 +80,7 @@ class Music:
                 audio = {}
         else:
             self.info = jsd({
-                'title': os.path.basename(self.path),
+                'title': (os.path.basename(self.path) if self.path is not None else 'Generated Samples'),
                 'album': "Unknown album",
                 'artist': "Unknown artist",
                 'autor': "Unknown autor",
@@ -82,7 +89,10 @@ class Music:
             })
             return
 
-        title = os.path.basename(self.path)
+        if self.path is None:
+            title = "Generated Samples"
+        else:
+            title = os.path.basename(self.path)
         if ext == ".flac" and 'title' in audio:
             title = audio['title'][0]
         elif ext == ".mp3" and 'TIT2' in audio:
@@ -162,7 +172,7 @@ class Music:
 
 
 class MutableMusic(Music):
-    def __init__(self, path):
+    def __init__(self, path: str | pygame.mixer.Sound):
         super().__init__(path)
 
         self.temp = None
@@ -445,23 +455,23 @@ class MutableMusic(Music):
 
 FUNCTIONS = {
     # support
-    'get-temp': lambda mus: mus.update_temp(),
+    'get-temp': lambda self, mus: mus.update_temp(),
     # change
-    'scale': lambda mus, x: mus.scaling(float(x)),
-    'jackal': lambda mus, x: mus.jackal(float(x)),
-    'distortion': lambda mus, x: mus.distortion(float(x)),
-    'speeding': lambda mus, x: mus.speeding(float(x)),
-    'aspeeding': lambda mus, x: mus.accurate_speeding(float(x)),
-    'pitching': lambda mus, x: mus.pitching(float(x)),
-    'fpitching': lambda mus, x: mus.fast_pitching(float(x)),
-    'apitching': lambda mus, x: mus.accurate_pitching(float(x)),
-    'afpitching': lambda mus, x: mus.accurate_fast_pitching(float(x)),
-    'echo': lambda mus, *args: mus.echo(*list(map(float, args))),
-    'reverse': lambda mus: mus.reverse(),
-    'reverse-temp': lambda mus: mus.reverse_temp(),
+    'scale': lambda self, mus, x: mus.scaling(float(x)),
+    'jackal': lambda self, mus, x: mus.jackal(float(x)),
+    'distortion': lambda self, mus, x: mus.distortion(float(x)),
+    'speeding': lambda self, mus, x: mus.speeding(float(x)),
+    'aspeeding': lambda self, mus, x: mus.accurate_speeding(float(x)),
+    'pitching': lambda self, mus, x: mus.pitching(float(x)),
+    'fpitching': lambda self, mus, x: mus.fast_pitching(float(x)),
+    'apitching': lambda self, mus, x: mus.accurate_pitching(float(x)),
+    'afpitching': lambda self, mus, x: mus.accurate_fast_pitching(float(x)),
+    'echo': lambda self, mus, *args: mus.echo(*list(map(float, args))),
+    'reverse': lambda self, mus: mus.reverse(),
+    'reverse-temp': lambda self, mus: mus.reverse_temp(),
     # saving
-    'update': lambda mus: (mus.update_sound(), mus.get_info()),
-    'save': lambda mus: mus.save(),
+    'update': lambda self, mus: (mus.update_sound(), mus.get_info()),
+    'save': lambda self, mus, path: mus.save(os.path.join(self.app.d.path, path)),
 }
 
 
@@ -574,29 +584,35 @@ class Album:
             return 0, 0
         return self.time / 1000.0, self.curr.info['length']
 
-    def add(self, mus_path: str):
-        was_paused = not self.paused
+    def add(self, mus_path: str | pygame.mixer.Sound):
+        if isinstance(mus_path, pygame.mixer.Sound):
+            mus = MutableMusic(mus_path)
+            mus.post_init()
+            log("info", f"loaded music: {mus.info.title}")
+            self.list.append(mus)
+        else:
+            was_paused = not self.paused
 
-        with global_pygame_mutex:
+            with global_pygame_mutex:
 
-            if was_paused:
-                self.pause()
+                if was_paused:
+                    self.pause()
 
-            try:
-                mus: MutableMusic = MutableMusic(mus_path)
-            except Exception as e:
-                log("error", f"error: {e}")
+                try:
+                    mus: MutableMusic = MutableMusic(mus_path)
+                except Exception as e:
+                    log("error", f"error: {e}")
+                    if was_paused:
+                        self.unpause()
+                    return
+
                 if was_paused:
                     self.unpause()
-                return
-
-            if was_paused:
-                self.unpause()
 
 
-        mus.post_init()
-        log("info", f"loaded music: {mus.info.title}")
-        self.list.append(mus)
+            mus.post_init()
+            log("info", f"loaded music: {mus.info.title}")
+            self.list.append(mus)
         if not self.paused:  # start play music
             if len(self.list) == 1:  # if it is first new music.
                 self.playing = 0

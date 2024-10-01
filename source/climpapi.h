@@ -2,7 +2,7 @@
 #define CLIMPAPI_H_INCLUDED
 
 
-#define NOTES_PER_BEAT 128
+#define NOTES_PER_BEAT 512
 
 
 enum
@@ -44,6 +44,7 @@ struct track
 
     struct note_meta *notes_meta;
     struct note *notes;
+    int *modes;
     int notes_len;
 
     int (*beats)[NOTES_PER_BEAT];

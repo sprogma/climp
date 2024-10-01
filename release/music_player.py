@@ -17,6 +17,8 @@ from curses.textpad import Textbox, rectangle
 from threading import Thread, Lock
 import ctypes
 
+from music_gen import *
+
 import music_class
 music_gen_path = pathlib.Path(__file__).parent.joinpath('./music_gen.py')
 with open(str(music_gen_path), 'r') as f:
@@ -234,7 +236,7 @@ global_executor_hash = 0
 def gen_f(function_import):
     return lambda self, *args:  log('warn', f'skip cmd-let {function_import} because current music is None.') \
                                 if self.selected is None \
-                                else music_class.FUNCTIONS[function_import](self.app.lists[self.app.d.list.album].list[self.selected], *args)
+                                else music_class.FUNCTIONS[function_import](self, self.app.lists[self.app.d.list.album].list[self.selected], *args)
 
 
 for function_import in music_class.FUNCTIONS:
@@ -826,7 +828,7 @@ class Application:
                 self.autocomplete()
             else:
                 # insert character
-                if chr(key) == '\\' or chr(key) == '/' and self.d.console.autocompleted and self.d.console.string.rstrip()[-1] in ("'", '"'):
+                if (chr(key) == '\\' or chr(key) == '/') and self.d.console.autocompleted and self.d.console.string.rstrip()[-1] in ("'", '"'):
                     # if autocompleted, it can remove last quote.
                     self.d.console.string = self.d.console.string.rstrip()[:-1] + chr(key)
                 else:
@@ -1135,6 +1137,13 @@ class Application:
             history_length=100,
             history_position=0,
         )
+
+        x = TrackProject(climplib.kernel)
+        x.create('m')
+        self.lists[self.d.list.album].add(x.x.sound)
+        x = TrackProject(climplib.kernel)
+        x.create('t')
+        self.lists[self.d.list.album].add(x.x.sound)
 
         self.listdir()
 

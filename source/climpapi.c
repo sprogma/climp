@@ -30,6 +30,7 @@ int climp_load_track(struct track *t, float *dst, size_t dst_len, float *notes,
 
     t->raw = dst;           // use given pointer
     t->notes = notes;       // use given pointer
+    t->modes = modes;       // use given pointer
     t->notes_meta = tools;  // use given pointer
     t->beats = malloc(sizeof(*t->beats) * t->beats_len);
 
@@ -73,6 +74,7 @@ int climp_load_track(struct track *t, float *dst, size_t dst_len, float *notes,
 int climp_process_track_software(struct track *t)
 {
     // for each sample: generate sound.
+    #pragma omp parallel for
     for (int i = 0; i < t->time; ++i)
     {
         float value = 0.0;
@@ -88,7 +90,14 @@ int climp_process_track_software(struct track *t)
                 float v = t->notes[note].volume[0] * (1.0f - start) + start * t->notes[note].volume[1];
                 float f = t->notes[note].freq[0] * (1.0f - start) + start * t->notes[note].freq[1];
 
-                value += v * sin((float)i * f / t->ffreq * 2.0f * (float)M_PI);
+                if (t->modes[note] == 1)
+                {
+                    value += v * (float)(rand() % 10000) * v / 10000.f;
+                }
+                else
+                {
+                    value += v * sin((float)i * f / t->ffreq * 2.0f * (float)M_PI);
+                }
             }
         }
 
