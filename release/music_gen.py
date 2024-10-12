@@ -1,5 +1,32 @@
-import math
+from collections import defaultdict
+import shlex
+import json
+import string as literals
+import os
 import random
+import re
+import pathlib
+import numpy
+import pygame
+import time
+import datetime
+import numpy as np
+from random import randint, choice
+import curses
+from curses.textpad import Textbox, rectangle
+from threading import Thread, Lock
+import ctypes
+
+
+"""
+addstr = None
+c = None
+sc = None
+lsc = None
+rsc = None
+log = None
+jsd = None
+"""
 
 
 class ProgramExportTrackFreq:
@@ -110,19 +137,19 @@ class ProgramExportTrack:
 
 class ProjectNote:
     def __init__(self, instrument, frequency, time, length, volume=1.0):
-        self.i = instrument
-        self.f = frequency
-        self.t = time
-        self.l = length
-        self.v = volume
+        self.instrument = instrument
+        self.freq = frequency
+        self.time = time
+        self.length = length
+        self.volume = volume
 
 
 class ProjectToneTemplateItem:
     def __init__(self, frequency, time_start, length, volume):
-        self.f = frequency
-        self.t = time_start
-        self.l = length
-        self.v = volume
+        self.freq = frequency
+        self.time = time_start
+        self.length = length
+        self.volume = volume
 
 class ProjectToneTemplate:
     def __init__(self, iterable: []):
@@ -132,22 +159,23 @@ class ProjectToneTemplate:
         notes = []
         for i in self.tones:
             notes.append(ProjectNote(
-                tone.i,
-                tone.f * i.f.multiply + i.f.shift,
-                tone.t + tone.l * i.t.multiply + i.t.shift,
-                tone.l * i.l.multiply + i.l.shift,
-                tone.v * i.v.multiply + i.v.shift,
+                tone.instrument,
+                tone.freq * i.freq.multiply + i.freq.shift,
+                tone.time + tone.l * i.time.multiply + i.time.shift,
+                tone.length * i.length.multiply + i.length.shift,
+                tone.volume * i.volume.multiply + i.volume.shift,
             ))
         return notes
 
 class ProjectTone:
-    def __init__(self, tone_template, instrument, frequency, time, length, volume=1.0):
+    def __init__(self, instrument, tone_template, chanel, time, length, frequency=440.0, volume=1.0):
         self.template = tone_template
-        self.i = instrument
-        self.f = frequency
-        self.t = time
-        self.l = length
-        self.v = volume
+        self.chanel = chanel
+        self.time = time
+        self.length = length
+        self.instrument = instrument
+        self.freq = frequency
+        self.volume = volume
 
 
 class ProjectTimeInfo:
@@ -169,13 +197,64 @@ class TrackProject:
         self.draw_tones()
 
     def draw_tones(self):
-        # draw tones
-        line = []
-        for i in range(len(self.tones)):
-            # add to line
-            line.append((self.tones[i].time, self.tones[i].length, i))
-        line.sort()
-        # draw notes
+        self.tones.sort(key=lambda x: (x.chanel, x.time))
+        self.d.visual.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
+
+        def draw_tone(tone, tone_id):
+            ttime = tone.time
+            ltime = tone.length
+            # for each symbol
+            rows = int(ttime / self.d.visual.time_per_line)
+            ttime -= rows * self.d.visual.time_per_line
+            while ltime > 0.00001: # ! eps*10
+                block_len = ltime
+                if ttime + ltime - 0.000001 > self.d.visual.time_per_line:
+                    block_len = self.d.visual.time_per_line - ttime
+                w_block_len = block_len / self.d.visual.time_per_line * self.rw
+
+                if block_len > 0.000001: # if is not strange block
+                    # draw tone line
+                    xpos = ttime / self.d.visual.time_per_line * self.rw
+                    llen = int(xpos + w_block_len + 0.5) - int(xpos + 0.5)
+                    ll = f'{tone.template:{llen}}'
+                    if len(ll) > llen:
+                        ll = ll[:llen - 1] + '>'
+                    int_xpos = int(xpos + 0.5)
+                    addstr(
+                        rows * (self.d.visual.chanels + 1) + tone.chanel - self.d.visual.cy,
+                        self.lw + int_xpos,
+                        ll, (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
+                    )
+
+                # next line
+                ttime += block_len
+                ltime -= block_len
+                if ttime + 0.000001 > self.d.visual.time_per_line:
+                    ttime -= self.d.visual.chanels
+                    rows += 1
+
+        def draw_time():
+            t = self.d.visual.draw_time
+            rows = int(t / self.d.visual.time_per_line)
+            xpos = int((t - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw + 0.5)
+            for i in range(self.d.visual.chanels):
+                y = rows * (self.d.visual.chanels + 1) + i - self.d.visual.cy
+                x = xpos
+                if 0 <= x < self.rw and 0 <= y < self.h:
+                    sc.chgat(y, self.lw + x, 1, curses.color_pair(c.gen.timeline))
+
+        #draw lines
+
+        for i, tone in enumerate(self.tones):
+            draw_tone(tone, i)
+
+        for i in range(0, self.h):
+            if (i + self.d.visual.cy) % (self.d.visual.chanels + 1) == self.d.visual.chanels:
+                addstr(i, self.lw, '#' * self.rw, c.gen.text)
+
+        # draw time
+        draw_time()
+
 
     def events(self):
         key = 0
@@ -187,18 +266,12 @@ class TrackProject:
                 curses.resize_term(*sc.getmaxyx())
                 sc.clear()
                 sc.refresh()
-            if key == curses.KEY_RIGHT:
-                self.focus = Application.FOCUS_RIGHT
-            if key == curses.KEY_LEFT:
-                self.focus = Application.FOCUS_LEFT
-            else:
-                if self.mode == MODE_EXPLORER:
-                    self.events_explorer(key)
-                elif self.mode == MODE_CONSOLE:
-                    self.events_console(key)
+            if key == curses.KEY_UP:
+                self.d.visual.cy -= self.d.visual.scroll_step
+            if key == curses.KEY_DOWN:
+                self.d.visual.cy += self.d.visual.scroll_step
 
-    def create(self, what):
-        dt = 0.25
+    def create(self, what, dt=0.25):
         lm = 1
         fqcorr = 0.5
 
@@ -222,7 +295,7 @@ class TrackProject:
             0.004
         ]
 
-        def add(t, fq, l=1.0, /, volume=1.0):
+        def addcc(t, fq, l=1.0, /, volume=1.0):
             for i in range(len(sndvlm)):
                 f = fq * (i + 1) * fqcorr
                 v = sndvlm[i]
@@ -240,10 +313,15 @@ class TrackProject:
                 self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
             return t + l
 
+        def add(t, fq, l=1.0, /, volume=1.0):
+            self.tones.append(ProjectTone(None, str(fq), randint(0, 6), t * dt, l * dt))
+            return addcc(t, fq, l, volume)
+
         def addc(t, ch, l=1):
             for cc, i in enumerate(sorted(ch)):
                 ovh = l * 0.05 * cc
-                add(t + ovh, i, l - ovh, volume=2.0 / len(ch))
+                addcc(t + ovh, i, l - ovh, volume=2.0 / len(ch))
+            self.tones.append(ProjectTone(None, "ch"+str(ch[0]), randint(0, 6), t * dt, l * dt))
             return t + l
 
         def mx(fq, oct):
@@ -253,6 +331,7 @@ class TrackProject:
             #for i in range(42):
             #    f = 5550 + i * 116.1251261261261
             self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
+            self.tones.append(ProjectTone(None, '###', 7, t * dt, l * dt))
             return t + l
 
         # notes
@@ -587,12 +666,33 @@ class TrackProject:
     def resize(self):
         self.h, self.w = sc.getmaxyx()
 
-        self.lw = max(30, self.w // 5)
+        self.lw = max(20, self.w // 5)
         self.rw = self.w - self.lw
 
     def run(self):
 
-        self.d.z = 0
+        self.d = jsd(
+            visual=jsd(
+                cy=-1,
+                chanels=8,
+                time_per_line=4.0,
+                scroll_step=3,
+                draw_time=0.0,
+            ),
+            time_start=0
+        )
+
+        self.create('m', dt=0.125)
+        self.x.sound.play()
+        self.d.time_start = pygame.time.get_ticks()
+
+        #self.tones.append(ProjectTone(None, 'C#', 0, 0.0, 1.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'A#', 0, 1.0, 1.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'Am', 1, 2.0, 1.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'A', 0, 2.0, 2.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'Am', 1, 4.0, 3.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'C', 0, 5.0, 1.0, 440.0))
+        #self.tones.append(ProjectTone(None, 'Em', 0, 6.0, 2.0, 440.0))
 
         while True:
             self.resize()

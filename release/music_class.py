@@ -179,7 +179,9 @@ class MutableMusic(Music):
         self.beats = None
 
     def update_temp(self):
-        y, sr = librosa.load(self.path, sr=self.freq)
+        # not use librosa open :(
+        y = self.array.astype('float32')[:,0]
+        sr = self.freq
         # D_harmonic, D_percussive = librosa.decompose.hpss(y, sr=sr)
         self.temp, self.beats = librosa.beat.beat_track(y=y, sr=sr)
         self.beats = librosa.frames_to_time(self.beats, sr=sr)

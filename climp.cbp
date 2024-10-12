@@ -17,11 +17,14 @@
 				<Compiler>
 					<Add option="-O2" />
 					<Add option="-Wall" />
+					<Add option="-fopenmp" />
 					<Add option="-DBUILD_DLL" />
 					<Add directory="../../OCL/include" />
 				</Compiler>
 				<Linker>
 					<Add option="-s" />
+					<Add option="-fopenmp" />
+					<Add option="-static" />
 					<Add library="user32" />
 					<Add library="../../OCL/bin/OpenCL.dll" />
 				</Linker>
