@@ -168,9 +168,8 @@ class ProjectToneTemplate:
         return notes
 
 class ProjectTone:
-    def __init__(self, instrument, tone_template, chanel, time, length, frequency=440.0, volume=1.0):
+    def __init__(self, instrument, tone_template, time, length, frequency=440.0, volume=1.0):
         self.template = tone_template
-        self.chanel = chanel
         self.time = time
         self.length = length
         self.instrument = instrument
@@ -196,11 +195,19 @@ class TrackProject:
         sc.clear()
         self.draw_tones()
 
+    def correct_camera_to_tone(self, tone, tone_id, tone_chanel):
+        rows = int(tone.time / self.d.visual.time_per_line) * (self.d.visual.chanels + 1) + tone_chanel
+
+        # correct cy
+        self.d.visual.cy = max(self.d.visual.cy, rows - (self.h - 10))
+        self.d.visual.cy = min(self.d.visual.cy, rows - 10)
+
     def draw_tones(self):
-        self.tones.sort(key=lambda x: (x.chanel, x.time))
+        for chanel in self.tones:
+            chanel.sort(key=lambda x: x.time)
         self.d.visual.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
 
-        def draw_tone(tone, tone_id):
+        def draw_tone(tone, tone_id, tone_chanel, selected=False):
             ttime = tone.time
             ltime = tone.length
             # for each symbol
@@ -208,7 +215,7 @@ class TrackProject:
             ttime -= rows * self.d.visual.time_per_line
             while ltime > 0.00001: # ! eps*10
                 block_len = ltime
-                if ttime + ltime - 0.000001 > self.d.visual.time_per_line:
+                if ltime - 0.000001 > self.d.visual.time_per_line - ttime:
                     block_len = self.d.visual.time_per_line - ttime
                 w_block_len = block_len / self.d.visual.time_per_line * self.rw
 
@@ -221,16 +228,19 @@ class TrackProject:
                         ll = ll[:llen - 1] + '>'
                     int_xpos = int(xpos + 0.5)
                     addstr(
-                        rows * (self.d.visual.chanels + 1) + tone.chanel - self.d.visual.cy,
+                        rows * (self.d.visual.chanels + 1) + tone_chanel - self.d.visual.cy,
                         self.lw + int_xpos,
-                        ll, (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
+                        ll,
+                        c.gen.note.selected
+                        if selected else
+                        (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
                     )
 
                 # next line
                 ttime += block_len
                 ltime -= block_len
                 if ttime + 0.000001 > self.d.visual.time_per_line:
-                    ttime -= self.d.visual.chanels
+                    ttime -= self.d.visual.time_per_line
                     rows += 1
 
         def draw_time():
@@ -245,16 +255,45 @@ class TrackProject:
 
         #draw lines
 
-        for i, tone in enumerate(self.tones):
-            draw_tone(tone, i)
+        for chanel_id, chanel in enumerate(self.tones):
+            for i, tone in enumerate(chanel):
+                draw_tone(tone, i, chanel_id)
 
         for i in range(0, self.h):
             if (i + self.d.visual.cy) % (self.d.visual.chanels + 1) == self.d.visual.chanels:
-                addstr(i, self.lw, '#' * self.rw, c.gen.text)
+                addstr(i, self.lw, '_' * self.rw, c.gen.text)
+
+        # draw selection
+        draw_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
+                  self.d.visual.selection.position,
+                  self.d.visual.selection.chanel, selected=True)
 
         # draw time
         draw_time()
 
+
+    def move_selection_mod(self, direction):
+        selected_tone = self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position]
+        rows = int(selected_tone.time / self.d.visual.time_per_line)
+        xpos = int((selected_tone.time - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
+        rows = rows * (self.d.visual.chanels + 1) + self.d.visual.selection.chanel
+        mind = float('inf')
+        sel = None
+        for chanel_id, chanel in enumerate(self.tones):
+            for i, tone in enumerate(chanel):
+                tone_rows = int(tone.time / self.d.visual.time_per_line)
+                tone_xpos = int((tone.time - tone_rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
+                tone_rows = tone_rows * (self.d.visual.chanels + 1) + chanel_id
+                if abs(xpos - tone_xpos) < 2 * abs(rows - tone_rows):
+                    if (direction == -1 and tone_rows < rows) or \
+                       (direction ==  1 and tone_rows > rows):
+                        d = abs(rows - tone_rows) * abs(rows - tone_rows) + abs(xpos - tone_xpos) * abs(xpos - tone_xpos)
+                        if d < mind:
+                            mind = d
+                            sel = chanel_id, i
+        if sel is not None:
+            self.d.visual.selection.chanel = sel[0]
+            self.d.visual.selection.position = sel[1]
 
     def events(self):
         key = 0
@@ -267,9 +306,29 @@ class TrackProject:
                 sc.clear()
                 sc.refresh()
             if key == curses.KEY_UP:
-                self.d.visual.cy -= self.d.visual.scroll_step
+                self.move_selection_mod(-1)
+                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
+                                            self.d.visual.selection.position,
+                                            self.d.visual.selection.chanel)
             if key == curses.KEY_DOWN:
-                self.d.visual.cy += self.d.visual.scroll_step
+                self.move_selection_mod(1)
+                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
+                                            self.d.visual.selection.position,
+                                            self.d.visual.selection.chanel)
+            if key == curses.KEY_RIGHT:
+                self.d.visual.selection.position += 1
+                if self.d.visual.selection.position >= len(self.tones[self.d.visual.selection.chanel]):
+                    self.d.visual.selection.position = len(self.tones[self.d.visual.selection.chanel]) - 1
+                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
+                                            self.d.visual.selection.position,
+                                            self.d.visual.selection.chanel)
+            if key == curses.KEY_LEFT:
+                self.d.visual.selection.position -= 1
+                if self.d.visual.selection.position < 0:
+                    self.d.visual.selection.position = 0
+                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
+                                            self.d.visual.selection.position,
+                                            self.d.visual.selection.chanel)
 
     def create(self, what, dt=0.25):
         lm = 1
@@ -313,15 +372,15 @@ class TrackProject:
                 self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
             return t + l
 
-        def add(t, fq, l=1.0, /, volume=1.0):
-            self.tones.append(ProjectTone(None, str(fq), randint(0, 6), t * dt, l * dt))
+        def add(t, fq, l=1.0, volume=1.0):
+            self.tones[randint(0, 6)].append(ProjectTone(None, str(fq), t * dt, l * dt))
             return addcc(t, fq, l, volume)
 
         def addc(t, ch, l=1):
             for cc, i in enumerate(sorted(ch)):
                 ovh = l * 0.05 * cc
                 addcc(t + ovh, i, l - ovh, volume=2.0 / len(ch))
-            self.tones.append(ProjectTone(None, "ch"+str(ch[0]), randint(0, 6), t * dt, l * dt))
+            self.tones[randint(0, 6)].append(ProjectTone(None, "ch"+str(ch[0]), t * dt, l * dt))
             return t + l
 
         def mx(fq, oct):
@@ -331,7 +390,7 @@ class TrackProject:
             #for i in range(42):
             #    f = 5550 + i * 116.1251261261261
             self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
-            self.tones.append(ProjectTone(None, '###', 7, t * dt, l * dt))
+            self.tones[7].append(ProjectTone(None, '###', t * dt, l * dt))
             return t + l
 
         # notes
@@ -398,65 +457,66 @@ class TrackProject:
             def skip():
                 nonlocal et
                 for i in range(4):
-                    add(et, mx(A, 1))
+                    add(et, mx(A, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(F, 1))
+                    add(et, mx(F, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(C, 1))
+                    add(et, mx(C, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(A, 0))
+                    add(et, mx(A, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(D, 0))
+                    add(et, mx(D, 0), l=1.5)
 
                     et += 1 - 0.025 * 4
 
-                    add(et, mx(D, 0))
+                    add(et, mx(D, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(A, 0))
+                    add(et, mx(A, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(C, 1))
+                    add(et, mx(C, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(F, 1))
+                    add(et, mx(F, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(A, 1))
+                    add(et, mx(A, 1), l=1.5)
 
                     et += 1 - 0.025 * 4
 
-                    add(et, mx(A, 1))
+                    add(et, mx(A, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(F, 1))
+                    add(et, mx(F, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(C, 1))
+                    add(et, mx(C, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(A, 0))
+                    add(et, mx(A, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(D, 0))
+                    add(et, mx(D, 0), l=1.5)
 
                     et += 1 - 0.025 * 4
 
-                    add(et, mx(D, 0))
+                    add(et, mx(D, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(A, 0))
+                    add(et, mx(A, 0), l=1.5)
                     et += 0.025
-                    add(et, mx(C, 1))
+                    add(et, mx(C, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(F, 1))
+                    add(et, mx(F, 1), l=1.5)
                     et += 0.025
-                    add(et, mx(C, 2))
+                    add(et, mx(C, 2), l=1.5)
 
                     et += 1 - 0.025 * 4
 
             def beat(t, ch, l=1):
                 global et
+                mult = 2.0
                 for i in range(2):
-                    addc(t + 0 * l + 8 * l * i, ch, l)
-                    addc(t + 1 * l + 8 * l * i, ch, l)
+                    addc(t + 0 * l + 8 * l * i, ch, l*mult)
+                    addc(t + 1 * l + 8 * l * i, ch, l*mult)
                     bt(t + 2 * l + 8 * l * i, l)
-                    addc(t + 3 * l + 8 * l * i, ch, l)
-                    addc(t + 4 * l + 8 * l * i, ch, l)
-                    addc(t + 5 * l + 8 * l * i, ch, l)
+                    addc(t + 3 * l + 8 * l * i, ch, l*mult)
+                    addc(t + 4 * l + 8 * l * i, ch, l*mult)
+                    addc(t + 5 * l + 8 * l * i, ch, l*mult)
                     bt(t + 6 * l + 8 * l * i, l)
-                addc(t + 7 * l + 8 * l, ch, l)
+                addc(t + 7 * l + 8 * l, ch, l*mult)
                 return t + 16 * l
 
             # TRACK
@@ -678,9 +738,14 @@ class TrackProject:
                 time_per_line=4.0,
                 scroll_step=3,
                 draw_time=0.0,
+                selection=jsd( # multiple selection is not implemented
+                    chanel=2,
+                    position=5,
+                )
             ),
             time_start=0
         )
+        self.tones = [[] for x in range(self.d.visual.chanels)]
 
         self.create('m', dt=0.125)
         self.x.sound.play()

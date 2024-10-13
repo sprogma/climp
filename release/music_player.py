@@ -1080,8 +1080,9 @@ c = jsd({
         'note': jsd({
             'a': 40,
             'b': 41,
+            'selected': 42,
         }),
-        'timeline': 42,
+        'timeline': 43,
     })
 })
 #    END INDEX IS 39, at 'gen/text'
@@ -1157,6 +1158,7 @@ def init_colors():
     curses.init_pair(c.gen.text, curses.COLOR_WHITE, curses.COLOR_BLACK)
     curses.init_pair(c.gen.note.a, curses.COLOR_BLACK, curses.COLOR_WHITE)
     curses.init_pair(c.gen.note.b, curses.COLOR_BLACK, COLOR_LIGHT_GREY)
+    curses.init_pair(c.gen.note.selected, curses.COLOR_BLACK, curses.COLOR_CYAN)
     curses.init_pair(c.gen.timeline, curses.COLOR_BLACK, curses.COLOR_YELLOW)
 
 
