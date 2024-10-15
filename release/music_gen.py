@@ -29,6 +29,62 @@ jsd = None
 """
 
 
+
+class GenInstrument:
+    def __init__(self, instrument_id, kernel_function):
+        self.id = instrument_id
+        self.kernel = kernel_function
+
+
+class GenTone:
+    def __init__(self, instrument_id, frequency, time, length, *data):
+        self.instrument_id = instrument_id
+        self.frequency = frequency
+        self.time = time
+        self.length = length
+        self.data = data
+
+
+class GenItem:
+    def __init__(self, *tones):
+        self.tones: [GenTone] = tones
+
+
+class Gen:
+    def __init__(self, api_function):
+        self.api_function = api_function
+        self.items: [GenItem] = []
+
+    def add_item(self, item):
+        self.items.append(item)
+
+    def compile(self):
+        total_size = sum(map(len, self.items))
+
+        # 32 extra bytes
+        notes = np.zeros(total_size, dtype=[('instrument', np.int32),
+                                            ('frequency', np.float32),
+                                            ('time', np.float32),
+                                            ('length', np.float32),
+                                            ('data', 'B32')])
+
+        end = 0
+
+        for item in self.items:
+            for note in item:
+                notes[end]["instrument"] = note.instrument_id
+                notes[end]["frequency"] = note.frequency
+                notes[end]["time"] = note.time
+                notes[end]["length"] = note.length
+                notes[end]["data"] = note.data
+                end += 1
+
+        # compile notes
+
+        notes = np.sort(notes, order=['time'])
+        self.api_function(notes)
+
+
 class ProgramExportTrackFreq:
     def __init__(self):
         self.notes = np.zeros((64, 6), dtype=np.float32)
@@ -177,11 +233,6 @@ class ProjectTone:
         self.volume = volume
 
 
-class ProjectTimeInfo:
-    def __init__(self):
-        ...
-
-
 class TrackProject:
     def __init__(self, api_function):
         self.x = ProgramExportTrack(api_function)
@@ -273,9 +324,14 @@ class TrackProject:
 
 
     def move_selection_mod(self, direction):
+        def get_x_dist(x1, x2, y1, y2):
+            if y1 <= x1 <= y2 or y1 <= x2 <= y2 or x1 <= y1 <= x2 or x1 <= y2 <= x2:
+                return -(min(x2, y2) - max(x1, y1)) * 0.001
+            return min(abs(x1 - y1), abs(x2 - y2))
         selected_tone = self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position]
         rows = int(selected_tone.time / self.d.visual.time_per_line)
         xpos = int((selected_tone.time - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
+        xendpos = int((selected_tone.time + selected_tone.length - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
         rows = rows * (self.d.visual.chanels + 1) + self.d.visual.selection.chanel
         mind = float('inf')
         sel = None
@@ -283,11 +339,13 @@ class TrackProject:
             for i, tone in enumerate(chanel):
                 tone_rows = int(tone.time / self.d.visual.time_per_line)
                 tone_xpos = int((tone.time - tone_rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
+                tone_xendpos = int((tone.time + tone.length - tone_rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
                 tone_rows = tone_rows * (self.d.visual.chanels + 1) + chanel_id
-                if abs(xpos - tone_xpos) < 2 * abs(rows - tone_rows):
+                xdist = get_x_dist(xpos, xendpos, tone_xpos, tone_xendpos)
+                if xdist < 2 * abs(rows - tone_rows):
                     if (direction == -1 and tone_rows < rows) or \
                        (direction ==  1 and tone_rows > rows):
-                        d = abs(rows - tone_rows) * abs(rows - tone_rows) + abs(xpos - tone_xpos) * abs(xpos - tone_xpos)
+                        d = abs(rows - tone_rows) + xdist
                         if d < mind:
                             mind = d
                             sel = chanel_id, i
@@ -712,16 +770,14 @@ class TrackProject:
             lm = 2.0
             metal1()
 
+        return self.x.sound
+
+    def compile(self):
         print(f'{self.x.freq.len} notes...\n')
         self.x.compile()
         #self.x.sound.play(1)
         print('result length = ', self.x.raw.shape[0] / self.x.mixer.frequency, 's')
         print('ok')
-
-        return self.x.sound
-
-        while True:
-            ...
 
     def resize(self):
         self.h, self.w = sc.getmaxyx()
@@ -747,7 +803,8 @@ class TrackProject:
         )
         self.tones = [[] for x in range(self.d.visual.chanels)]
 
-        self.create('m', dt=0.125)
+        self.create('m', dt=0.5)
+        self.compile()
         self.x.sound.play()
         self.d.time_start = pygame.time.get_ticks()
 

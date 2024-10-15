@@ -2,60 +2,80 @@
 #define CLIMPAPI_H_INCLUDED
 
 
+#define BEATS_PER_SECOND 10.0f
 #define NOTES_PER_BEAT 512
+#define MAX_KERNEL_SIZE 32768
 
 
-enum
-{
-    NOTEMODE_LINEAR=0,
-    NOTEMODE_FAST=1,
-};
-
-
+/*
+    struct note may has fields start and end - filled with samples of
+    time and time + length values from struct input_note
+*/
 struct note
 {
-    int sample[2];
-    float freq[2];
-    float volume[2];
+    int instrument;
+    float frequency;
+    float time;
+    float length;
+    char data[32];
 };
 
-struct note_meta
-{
-    int tool;
-};
-
-struct tool
-{
-
-};
 
 struct track
 {
     /* meta info */
-    int freq;
-    float ffreq;
-    int beat_time;
-    int time;
+    float freq;
 
-    /* arrays */
-    float *raw; // length of raw is time.
+    /* data storages */
 
-    struct tool *tools;
+    float *buffer; // raw result
+    int samples;
 
-    struct note_meta *notes_meta;
-    struct note *notes;
-    int *modes;
+    struct instrument *instruments; // instruments data
+    int instruments_len;
+
+    struct note *notes; // input notes
     int notes_len;
 
-    int (*beats)[NOTES_PER_BEAT];
+    /*
+        beats buffer:
+            beats[time_step] -> -1 terminating array of notes (their ids),
+                                which intersect with this time_step
+
+            time_step * beat_samples = samples of note
+
+            beats_len * beat_samples >= samples
+    */
+    int beat_samples;
+    int (*beats)[NOTES_PER_BEAT]; // optimizing information about notes.
     int beats_len;
 };
 
 
-int climp_load_track(struct track *t, float *dst, size_t dst_len, float *notes,
-                      int *tools, int *modes, size_t notes_len, int base_freq);
+/*
+    Loads track into first operand, using passed data
+*/
+int climp_load_track(
+    struct track *t,
+    struct instrument *instruments;
+    size_t instruments_len,
+    float *dst,
+    size_t dst_len,
+    struct input_note *notes,
+    size_t notes_len,
+    float base_freq);
 
-int climp_process_track_software(struct track *t);
+
+/*
+    Prepares track - generates kernels, calculating
+    beats buffers, doing other stuff.
+*/
+int climp_track_generate_beats(struct track *t);
+/*
+    Prepares track - generates kernels, calculating
+    beats buffers, doing other stuff.
+*/
+int climp_track_generate_kernel(struct track *t);
 
 
 #endif // CLIMPAPI_H_INCLUDED

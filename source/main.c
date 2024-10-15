@@ -14,24 +14,20 @@
 
 
 
-float f(float x)
-{
-    return tanh(x);
-}
-
 void DLL_EXPORT kernel(
+    struct instrument *instruments;
+    size_t instruments_len,
     float *dst,
     size_t dst_len,
-    float *notes,
-    int   *tools,
-    int   *modes,
+    struct input_note *notes,
     size_t notes_len,
-    int    base_freq
+    float base_freq
 )
 {
-    struct track t;
 
-    climp_load_track(&t, dst, dst_len, notes, tools, modes, notes_len, base_freq);
+    struct track t;
+    climp_load_track(&t, dst, dst_len, notes, notes_len, base_freq);
+
 
     climp_process_track_software(&t);
 
@@ -40,6 +36,9 @@ void DLL_EXPORT kernel(
 
     return;
 }
+
+
+
 
 DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {

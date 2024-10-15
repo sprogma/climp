@@ -965,13 +965,13 @@ class Application:
 
         lib_linkage()
 
-        x = music_gen.TrackProject(climplib.kernel)
-        x.run()
-        x.create('m')
-        self.lists[self.d.list.album].add(x.x.sound)
-        x = music_gen.TrackProject(climplib.kernel)
-        x.create('t')
-        self.lists[self.d.list.album].add(x.x.sound)
+        #x = music_gen.TrackProject(climplib.kernel)
+        #x.run()
+        #x.create('m')
+        #self.lists[self.d.list.album].add(x.x.sound)
+        #x = music_gen.TrackProject(climplib.kernel)
+        #x.create('t')
+        #self.lists[self.d.list.album].add(x.x.sound)
 
 
         self.listdir()

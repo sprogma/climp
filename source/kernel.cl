@@ -1,78 +1,65 @@
 
-#define delta_time 0.001
-#define delta_time_2 (delta_time * delta_time)
 
-struct point
+struct note
 {
-    float3 pos;
-    float3 ppos;
-    float3 force;
-    int type;
-};
-
-
-float type_mass[3] = {1.0, 1.0, 0.0005446623093};
-float type_charge[3] = {1.0, 0.0, -1.0};
-
-
-
-kernel void phys_a( __global struct point *points, int points_len )
-{
-    /* nothing. [place to optimisation grid creation] */
-    return;
+    int instrument_id;
+    float frequency;
+    float time;
+    float length;
+    char data[32];
 }
 
 
-kernel void phys_b( __global struct point *points, int points_len )
+/* placeholder for instruments */
+INSTRUMENTS_SOURCE_LINE
+
+float default_instrument(float sample_time, struct note *note, float base_frequency)
 {
-    /* calculate forces */
-    int id = get_global_id(0);
-
-    float3 force = 0;
-
-    for (int i = 0; i < points_len; ++i)
-    {
-        if (i != id)
-        {
-            float3 to_it = points[i].pos - points[id].pos;
-            if (length(to_it) > 0.000001)
-            {
-                float3 dir = normalize(to_it);
-                float d = length(to_it);
-
-                // apply gravitation:
-                force += dir * 0.01 * type_mass[points[id].type] * type_mass[points[i].type] / (d * d);
-
-                // apply charge:
-                force -= dir * 15.0 * type_charge[points[id].type] * type_charge[points[i].type] / (d * d);
-
-                // apply strong z
-                if (points[id].type ^ points[i].type == 2)
-                {
-                    force += dir * 150.0 * type_mass[points[id].type] * type_mass[points[i].type] / pow(d, 1.8);
-                    force -= dir * 200.0 * type_mass[points[id].type] * type_mass[points[i].type] / pow(d, 2.14);
-                }
-            }
-            else
-            {
-                int rid = (id * 125913) % 257 * 179;
-                float3 f = (float3)((float)(rid % 105 - 52), (float)(rid % 107 - 53), (float)(rid % 111 - 55));
-                force += f * 0.01;
-            }
-        }
-    }
-
-    points[id].force = force;
+    return sin(note->frequency / base_frequency);
 }
 
 
-kernel void phys_c( __global struct point *points, int points_len )
+
+kernel void generation_kernel(  float *dst,
+                                uint dst_len,
+                                struct note *notes,
+                                uint notes_len,
+                                float *beats,
+                                uint beats_len,
+                                uint beats_samples,
+                                float base_frequency
+)
 {
     /* move points */
     int id = get_global_id(0);
+    float sample_time = (float)id / base_frequency;
 
-    float3 ppos = points[id].pos;
-    float this_mass = type_mass[points[id].type];
-    points[id].pos = 2.0 * points[id].pos - points[id].ppos + points[id].force / this_mass * delta_time_2;
-    points[id].ppos = ppos;
+    /* for each note in this beat,  */
+    /* apply it's instrument kernel */
+
+    int note_id;
+    int beat = 32 * id / beats_samples;
+    float global_result = 0.0, result;
+    struct note *note;
+
+    while ((note_id = beats[beat]) != -1)
+    {
+        note = notes + note_id;
+        /* update this note */
+        INSTRUMENTS_BRANCHING_LINE
+        else
+        {
+            result = default_instrument(sample_time, note, base_frequency);
+        }
+
+        global_result += result;
+    }
+
+    /* do we need this tanh ? */
+
+    global_result = tanh(global_result);
+
+    dst[id] = global_result;
+
+    /* return */
 }

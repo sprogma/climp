@@ -12,97 +12,153 @@
 
 
 
-
-int climp_load_track(struct track *t, float *dst, size_t dst_len, float *notes,
-                      int *tools, int *modes, size_t notes_len, int base_freq)
+/*
+    Loads track into first operand, using passed data
+*/
+int climp_load_track(
+    struct track *t,
+    struct instrument *instruments;
+    size_t instruments_len,
+    float *dst,
+    size_t dst_len,
+    struct input_note *notes,
+    size_t notes_len,
+    float base_freq)
 {
-    // fill meta data
+    /// fill raw result buffer
+    t->samples = dst_len;
+    t->buffer = dst;
 
-    t->time  = dst_len;           // load samples count.
-    t->freq  = base_freq;         // load freq.
-    t->ffreq = base_freq;         // load freq.
-    t->beat_time = t->freq / 10; // 10 beats per second.
+    /// fill instruments data
+    t->instruments_len = instruments_len;
+    t->instruments = instruments;
 
-    t->beats_len = t->time / t->beat_time + 1;
+    /// copy and convert notes input
     t->notes_len = notes_len;
+    struct note *notes_copy = malloc(sizeof(*notes_copy) * t->notes_len);
+    if (!notes_copy) {return 1;} // test malloc error
+    // copy data
+    memcpy(notes_copy, notes, sizeof(*notes_copy) * t->notes_len);
+    // save pointer
+    t->notes = notes_copy;
+    // convert input_note to note
+    /*may be this convertion will be needed in future*/
 
-    // bind memory buffers
-
-    t->raw = dst;           // use given pointer
-    t->notes = notes;       // use given pointer
-    t->modes = modes;       // use given pointer
-    t->notes_meta = tools;  // use given pointer
+    /// allocate beats buffer
+    t->beat_samples = output_frequency / BEATS_PER_SECOND;
+    t->beats_len = (t->samples + t->beat_samples - 1) / t->beat_samples;
     t->beats = malloc(sizeof(*t->beats) * t->beats_len);
+    if (!t->beats) {free(t->notes); return 1;} // test malloc error
+    // fill by -1 - end terminating values
+    memset(t->beats, 0xFF, sizeof(*t->beats) * t->beats_len);
 
-    // fill buffers
+    return 0;
+}
 
-    memset(t->beats, 0xFF, sizeof(*t->beats) * t->beats_len); // fill beats with -1.
-    for (int i = 0; i < t->notes_len; ++i)
+/**
+    Calculate beats buffer:
+        beats[time_step] -> array of notes (their ids),
+                            which intersect with this time_step
+**/
+int climp_track_generate_beats(struct track *t)
+{
+    // for each note
+    for (int note_id = 0; note_id < t->notes_len; ++note_id)
     {
-        t->notes[i].sample[0] = notes[6 * i + 0] * base_freq;
-        t->notes[i].sample[1] = notes[6 * i + 1] * base_freq;
-    }
-
-    // calculate buffers
-    {
-        for (int i = 0; i < t->notes_len; ++i)
+        // get boundaries, there note sounds
+        int l = t->notes[i].time_start / t->beat_samples;
+        int r = t->notes[i].time_end / t->beat_samples;
+        for (int beat = l; beat <= r; ++beat)
         {
-            int l = t->notes[i].sample[0];
-            int r = t->notes[i].sample[1];
-            // apply to all buffers
-            int bl = l / t->beat_time;
-            int br = r / t->beat_time;
-            for (int b = bl; b <= br; ++b)
+            int k = 0; // position in beat cell to insert note id.
+            // inefficient insert, but efficient read.
+            while (t->beats[beat][k] != -1 && k < NOTES_PER_BEAT) {k++;}
+            // raise error if buffer size is exceeded
+            if (k == NOTES_PER_BEAT)
             {
-                int k = 0;
-                while (t->beats[b][k] != -1 && k < NOTES_PER_BEAT) { k++; } // get end of non -1 data
-                if (k == NOTES_PER_BEAT)
-                {
-                    fprintf(stderr, "Error: too many notes in one beat.\n");
-                    return 1;
-                }
-                t->beats[b][k] = i;
+                fprintf(stderr, "Error: count of notes in one beat has exceeded value NOTES_PER_BEAT=%d.\n"
+                                "Simplify your track, use more complicated instruments, or increase NOTES_PER_BEAT value.\n", NOTES_PER_BEAT);
+                return 1;
             }
+            // append note to this beat
+            t->beats[beat][k] = note_id;
         }
     }
+    return 0;
+}
 
-    // return
+/*
+    Prepares track - generates kernels for each instrument, and final code.
+*/
+int climp_track_generate_kernel(struct track *t)
+{
+    /// allocate kernel buffer
+    char *result_kernel = malloc(MAX_KERNEL_SIZE);
+    char *instruments_source_buffer = malloc(MAX_KERNEL_SIZE);
+    char *instruments_branching_buffer = malloc(MAX_KERNEL_SIZE);
+    int result_kernel_len = 0;
+    int instruments_source_buffer_len = 0;
+
+    // check for allocation error
+    // and free least values
+    if (!result_kernel) {return 1; free(instruments_source_buffer); free(instruments_branching_buffer)}
+    if (!instruments_source_buffer) {return 1; free(instruments_branching_buffer); free(result_kernel)}
+    if (!instruments_branching_buffer) {return 1; free(instruments_source_buffer); free(result_kernel)}
+
+
+    /// load base of kernel
+    FILE *source_file = fopen("./kernel.cl", "r");
+    if (!source_file) {return 2;} // check for error
+    // read source, and save it's len
+    result_kernel_len = fread(result_kernel, 1, result_kernel, source_file);
+    fclose(source_file);
+
+    /// init all instruments
+
+    // insert each instruments' source code into kernel
+
+    for (int instrument_id = 0; instrument_id < t->instruments_len; ++instrument_id)
+    {
+        // copy next kernel source, and adjust buffer len after addition.
+        memcpy(instruments_source_buffer + instruments_source_buffer_len, t->instruments[instrument_id].kernel_source, t->instruments[instrument_id].kernel_source_len);
+        instruments_source_buffer_len += t->instruments[instrument_id].kernel_source_len;
+    }
+
+    // insert each instrument into call branching
+
+    for (int instrument_id = 0; instrument_id < t->instruments_len; ++instrument_id)
+    {
+        sprintf(, " if (note->) {} else ")
+    }
+
+    /// search for string position
+    // this is standard placeholder
+    // it will be replaced in kernel on instruments sources
+    const char source_placeholder[] = "INSTRUMENTS_SOURCE_LINE";
+    const int source_placeholder_length = sizeof(source_placeholder) - 1;
+    // find position of placeholder in kernel source
+    int position = 0;
+    while (position < result_kernel_len - source_placeholder_length &&
+           strncmp(result_kernel + position, source_placeholder, source_placeholder_length) != 0)
+    {
+        position++;
+    }
+    // if not found default placeholder, raise error.
+    if (position == result_kernel_len - source_placeholder_length)
+    {
+        fprintf(stderr, "Kernel code corrupted. Not found label <%s>", source_placeholder);
+        return 2;
+    }
+
+
+    /// replace default placeholder with instruments_buffer data
+
+
     return 0;
 }
 
 
-int climp_process_track_software(struct track *t)
+int climp_process_track()
 {
-    // for each sample: generate sound.
-    #pragma omp parallel for
-    for (int i = 0; i < t->time; ++i)
-    {
-        float value = 0.0;
 
-        int note, k = 0, bt = i / t->beat_time;
-        while ((note = t->beats[bt][k++]) != -1)
-        {
-            // get shift
-            float start = (float)((i - t->notes[note].sample[0]) / (float)(t->notes[note].sample[1] - t->notes[note].sample[0]));
-            if (0.f <= start && start <= 1.f)
-            {
-                // add note
-                float v = t->notes[note].volume[0] * (1.0f - start) + start * t->notes[note].volume[1];
-                float f = t->notes[note].freq[0] * (1.0f - start) + start * t->notes[note].freq[1];
-
-                if (t->modes[note] == 1)
-                {
-                    value += v * (float)(rand() % 10000) * v / 10000.f;
-                }
-                else
-                {
-                    value += v * sin((float)i * f / t->ffreq * 2.0f * (float)M_PI);
-                }
-            }
-        }
-
-        t->raw[i] = value;
-    }
-
-    return 0;
 }
