@@ -1,65 +1,43 @@
 
+#define PARALLEL_CHANELS 2048
 
-struct note
+struct __attribute__ ((packed)) note
 {
-    int instrument_id;
+    int start;
+    int end;
     float frequency;
-    float time;
-    float length;
-    char data[32];
-}
+    float volume;
+};
 
-
-/* placeholder for instruments */
-INSTRUMENTS_SOURCE_LINE
-
-float default_instrument(float sample_time, struct note *note, float base_frequency)
-{
-    return sin(note->frequency / base_frequency);
-}
-
-
-
-kernel void generation_kernel(  float *dst,
-                                uint dst_len,
-                                struct note *notes,
-                                uint notes_len,
-                                float *beats,
-                                uint beats_len,
-                                uint beats_samples,
-                                float base_frequency
+kernel void generation_kernel( __global float *dest,
+                               uint dst_len,
+                               __global struct note *notes,
+                               uint notes_len,
+                               __global int *opt,
+                               uint opt_beat_samples,
+                               uint opt_len
 )
 {
-    /* move points */
-    int id = get_global_id(0);
-    float sample_time = (float)id / base_frequency;
+    int s = get_global_id(0);
 
-    /* for each note in this beat,  */
-    /* apply it's instrument kernel */
+    float res = 0.0;
+    float dr;
 
-    int note_id;
-    int beat = 32 * id / beats_samples;
-    float global_result = 0.0, result;
-    struct note *note;
-
-    while ((note_id = beats[beat]) != -1)
+    // iterate from notes
+    int beat = s / opt_beat_samples;
+    int note = 0, n;
+    while ((n = opt[beat * PARALLEL_CHANELS + note]) != -1)
     {
-        note = notes + note_id;
-        /* update this note */
-        INSTRUMENTS_BRANCHING_LINE
-        else
+        if (notes[n].start <= s && s <= notes[n].end)
         {
-            result = default_instrument(sample_time, note, base_frequency);
+            float v = notes[n].volume, k = 1.0f - (float)(s - notes[n].start) / 44100.0f;//(float)(notes[n].end - notes[n].start);
+            v *= fmax(0.01f, k);
+            dr = sin(s * notes[n].frequency / 44100.0f * 3.1415926f); // *= 2.0f ?
+            res += v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
         }
-
-        global_result += result;
+        note++;
     }
 
-    /* do we need this tanh ? */
-
-    global_result = tanh(global_result);
-
-    dst[id] = global_result;
-
-    /* return */
+    dest[s] = res;
+    return;
 }

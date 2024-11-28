@@ -9,6 +9,7 @@ import pathlib
 import numpy
 import pygame
 import time
+import math
 import datetime
 import numpy as np
 from random import randint, choice
@@ -28,167 +29,61 @@ log = None
 jsd = None
 """
 
+class jsd(dict):
+    def __init__(self, *args, **items):
+        if items and not args:
+            super(jsd, self).__init__(items)
+        else:
+            super(jsd, self).__init__(*args)
 
+    def __getattr__(self, name):
+        return self[name]
 
-class GenInstrument:
-    def __init__(self, instrument_id, kernel_function):
-        self.id = instrument_id
-        self.kernel = kernel_function
+    def __setattr__(self, name, value):
+        self[name] = value
+        return self
 
-
-class GenTone:
-    def __init__(self, instrument_id, frequency, time, length, *data):
-        self.instrument_id = instrument_id
-        self.frequency = frequency
+class GeneratorTone:
+    def __init__(self, time, length, volume, frequency):
         self.time = time
         self.length = length
-        self.data = data
-
-
-class GenItem:
-    def __init__(self, *tones):
-        self.tones: [GenTone] = tones
-
-
-class Gen:
-    def __init__(self, api_function):
-        self.api_function = api_function
-        self.items: [GenItem] = []
-
-    def add_item(self, item):
-        self.items.append(item)
-
-    def compile(self):
-        total_size = sum(map(len, self.items))
-
-        # 32 extra bytes
-        notes = np.zeros(total_size, dtype=[('instrument', np.int32),
-                                            ('frequency', np.float32),
-                                            ('time', np.float32),
-                                            ('length', np.float32),
-                                            ('data', 'B32')])
-
-        end = 0
-
-        for item in self.items:
-            for note in item:
-                notes[end]["instrument"] = note.instrument_id
-                notes[end]["frequency"] = note.frequency
-                notes[end]["time"] = note.time
-                notes[end]["length"] = note.length
-                notes[end]["data"] = note.data
-                end += 1
-
-        # compile notes
-
-        notes = np.sort(notes, order=['time'])
-        self.api_function(notes)
-
-
-class ProgramExportTrackFreq:
-    def __init__(self):
-        self.notes = np.zeros((64, 6), dtype=np.float32)
-        self.tools = np.zeros((64,), dtype=np.int32)
-        self.modes = np.zeros((64,), dtype=np.int32)
-        self.len = 0
-
-    @property
-    def alloc(self):
-        return self.notes.shape[0]
-
-    def add_note(self, pos, freq, volume, pos2, freq2, volume2, instrument, mode):
-        self.len += 1
-        if self.len > self.alloc:
-            if self.alloc < 32:
-                self.notes.resize((64, 6))
-                self.tools.resize((64, ))
-                self.modes.resize((64, ))
-            else:
-                new_len = int(self.alloc * 1.5)
-                self.notes.resize((new_len, 6))
-                self.tools.resize((new_len, ))
-                self.modes.resize((new_len, ))
-        self.notes[self.len - 1][0] = pos
-        self.notes[self.len - 1][1] = pos2
-        self.notes[self.len - 1][2] = freq
-        self.notes[self.len - 1][3] = freq2
-        self.notes[self.len - 1][4] = volume
-        self.notes[self.len - 1][5] = volume2
-        self.tools[self.len - 1] = instrument
-        self.modes[self.len - 1] = mode
-
-    def update(self):
-        self.notes.resize((self.len, 6))
-        idx = np.argsort(self.notes[:,0])
-        self.notes = self.notes[idx]
-        self.tools = self.tools[idx]
-        self.modes = self.modes[idx]
-
-
-class ProgramExportTrackInstrumentTone:
-    def __init__(self, freq_add, freq_mul, volume):
-        self.freq_add = freq_add
-        self.freq_mul = freq_mul
         self.volume = volume
+        self.frequency = frequency
 
-
-class ProgramExportTrackInstrument:
-    def __init__(self, tones):
-        self.tones : [ProgramExportTrackInstrumentTone] = tones
-
-
-class ProgramExportTrack:
+class Generator:
     def __init__(self, api_function):
         self.api_function = api_function
+        self.inputs: [GeneratorTone] = []
 
-        self.instruments : [ProgramExportTrackInstrument] = []
-        self.freq = ProgramExportTrackFreq()
-        self.raw = None
-        self.sound = None
-
-        self.mixer = jsd(
-            frequency=44100,
-        )
-
-    def add_note(self, iterable, instrument, mode):
-        self.freq.add_note(*iterable, instrument, mode)
-
-    def manage_instrument(self, instrument, data):
-        self.instruments[instrument] = ProgramExportTrackInstrument(data)
+    def add(self, item):
+        self.inputs.append(item)
 
     def compile(self):
-        self.freq.update()
+        # sort data
+        self.inputs.sort(key=lambda x: x.time)
 
-        # get info
-        samples = int(max(self.freq.notes[:self.freq.len,1]) * self.mixer.frequency)
+        # generate buffers
+        result_length = int(44100 * max(map(lambda i: i.time + i.length, self.inputs)))
+        result = np.zeros(result_length, dtype="float32")
 
-        # send c code signals
+        input_len = len(self.inputs)
+        input_times = np.zeros(input_len, dtype="float32")
+        input_lengths = np.zeros(input_len, dtype="float32")
+        input_frequencies = np.zeros(input_len, dtype="float32")
+        input_volumes = np.zeros(input_len, dtype="float32")
 
-        result = np.zeros((samples,), dtype=np.float32)
+        # set
+        for n, i in enumerate(self.inputs):
+            input_times[n] = self.inputs[n].time
+            input_lengths[n] = self.inputs[n].length
+            input_frequencies[n] = self.inputs[n].frequency
+            input_volumes[n] = self.inputs[n].volume
 
-        self.api_function(
-            result,
-            result.shape[0],
-            self.freq.notes,
-            self.freq.tools,
-            self.freq.modes,
-            self.freq.len,
-            self.mixer.frequency
-        )
+        # call
+        self.api_function(result, result_length, input_times, input_lengths, input_frequencies, input_volumes, input_len)
 
-        # set result data
-
-        self.raw = result
-        self.raw = np.tanh(self.raw)
-        self.raw *= 32767.0
-        self.raw = self.raw.astype(dtype=np.int16)
-        self.raw = np.column_stack((self.raw, self.raw))
-
-        # export sound
-
-
-        self.raw = self.raw.copy(order='C')
-        self.sound = pygame.sndarray.make_sound(self.raw)
+        # return
+        return result
 
 
 class ProjectNote:
@@ -207,6 +102,7 @@ class ProjectToneTemplateItem:
         self.length = length
         self.volume = volume
 
+
 class ProjectToneTemplate:
     def __init__(self, iterable: []):
         self.tones : [ProjectToneTemplateItem] = iterable
@@ -223,6 +119,7 @@ class ProjectToneTemplate:
             ))
         return notes
 
+
 class ProjectTone:
     def __init__(self, instrument, tone_template, time, length, frequency=440.0, volume=1.0):
         self.template = tone_template
@@ -235,11 +132,11 @@ class ProjectTone:
 
 class TrackProject:
     def __init__(self, api_function):
-        self.x = ProgramExportTrack(api_function)
+        self.x = Generator(api_function)
         self.rw, self.lw = 0, 0
         self.w, self.h = 0, 0
         self.d = jsd()
-        self.tones = []  # tones
+        self.tones = [[], [], [], [], [], [], [], []]  # tones
         self.temps = []  # tone templates
 
     def draw(self):
@@ -322,7 +219,6 @@ class TrackProject:
         # draw time
         draw_time()
 
-
     def move_selection_mod(self, direction):
         def get_x_dist(x1, x2, y1, y2):
             if y1 <= x1 <= y2 or y1 <= x2 <= y2 or x1 <= y1 <= x2 or x1 <= y2 <= x2:
@@ -395,39 +291,41 @@ class TrackProject:
         MODE_LINEAR = 0
         MODE_NOISE = 1
 
-        sndvlm = [
-            0.1,
-            0.03,
-            0.003,
-            0.07,
-            0.004,
-            0.02,
-            0.027,
-            0.013,
-            0.008,
-            0.0079,
-            0.0076,
-            0.0075,
-            0.0005,
-            0.004
-        ]
+        sndvlm = []
+        sndvlm.append([1.0, 1.0])
+        for i in range(1):
+            sndvlm.append([2**i, 1.0/(i+1.0) + 0.5])
+        for i in range(3):
+            sndvlm.append([1/(2**i), 1.0/(i + 2.0) + 1.0])
 
-        def addcc(t, fq, l=1.0, /, volume=1.0):
-            for i in range(len(sndvlm)):
-                f = fq * (i + 1) * fqcorr
-                v = sndvlm[i]
-                self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
-            for i in range(3):
-                f = fq / 2 ** i
-                v = 0.3
-                self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
+        v = 0.5
+        sss = sum(map(lambda x: x[1], sndvlm))
+        sndvlm = list(map(lambda x: (x[0], v * x[1] / sss), sndvlm))
+
+        print(sndvlm)
+
+        z = [0]*100
+        for i in sndvlm:
+            z[int(math.log(i[0]+0.01, 2.0)*4.0 + 50)] += i[1] * 100000
+        for p, i in enumerate(z):
+            f = pow(2.0, (p-50)/4)
+            print(f'{f:20.10f}', '#' * int(math.log(i + 0.1, 2.0)))
+
+
+        def addcc(t, fq, l=1.0, volume=1.0):
+            for ffq, v in sndvlm:
+                f = fq * ffq
+                v *= volume
+                #self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
+                self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
             return t + l
             for i in range(28):
                 f = fq * (i + 1) / 2.0
                 v = volume * 4/28
                 if i not in (1, 2, 4, 8, 16, 32):
                     v /= 1.1 ** i
-                self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
+                #self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
+                self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
             return t + l
 
         def add(t, fq, l=1.0, volume=1.0):
@@ -447,7 +345,8 @@ class TrackProject:
         def bt(t, l=1):
             #for i in range(42):
             #    f = 5550 + i * 116.1251261261261
-            self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
+            #self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
+            #self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,5.0,112525951259179.12512951251))
             self.tones[7].append(ProjectTone(None, '###', t * dt, l * dt))
             return t + l
 
@@ -763,14 +662,1063 @@ class TrackProject:
             et = beat(et, _Em,l=2)
             et = beat(et, _Em,l=4)
 
+        def river():
+            #    DO   DO#    RE   RE#   MI   FA   FA#   SO   SO#  LA   LA#    SI
+            r = ['0', '0#', '1', '1#', '2', '3', '3#', '4', '4#', '5', '5#', '6']
+            ddt = 1.5
+            def note(z, x, t, l):
+                add(t * ddt, 523.25 * pow(2, z + r.index(x) / 12), l * ddt, 1.0)
+
+            t = 0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, 1)
+            note(1, '5',  t+2.0, 1)
+            note(1, '4#', t+3.0, 1)
+
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(1, '5',  t+4.0, 1)
+            note(1, '2',  t+5.0, 1)
+            note(1, '5',  t+6.0, 1)
+            note(1, '1',  t+7.0, 1+3.0)
+
+            t += 12
+
+            note(0, '5', t-1.0, 0.5)
+            note(1, '0#', t-0.5, 0.5)
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, 1)
+            note(1, '5',  t+2.0, 1)
+            note(1, '4#', t+3.0, 1)
+
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(1, '5',  t+4.0, 1)
+            note(1, '2',  t+5.0, 1)
+            note(1, '5',  t+6.0, 1)
+            note(1, '1',  t+7.0, 1+4)
+
+            t += 12
+
+            note(0, '5', t-1.0, 0.5)
+            note(1, '0#', t-0.5, 0.5)
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, .5)
+            note(1, '5',  t+1.5, 1)
+            note(0, '5',  t+2.5, .5)
+            note(1, '4#',  t+3.0, .5)
+            note(1, '5',  t+3.5, 1)
+            note(0, '5',  t+4.5, .5)
+            note(1, '2',  t+5.0, .5)
+            note(1, '5',  t+5.5, 1)
+
+            note(0, '5',  t+6.5, .5)
+            note(1, '1',  t+7.0, .5)
+            note(0, '5',  t+7.5, .5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-1, '4#', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(0, '6',  t-0.2, 0.4)
+            note(1, '0#',  t+0.0, 1)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(0, '5',  t+2.0, 1)
+            note(1, '0#',  t+3.0, 1)
+            note(0, '4#',  t+4.0, 3)
+            note(0, '6',  t+4.0, 3)
+
+            t += 8
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(0, '5', t-1.0, 0.5)
+            note(0, '4#', t-0.5, 0.5)
+            note(0, '5',  t+0.0, 2.5)
+            note(0, '2', t+2.5, 0.5)
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6', t+3.5, 0.5)
+            note(1, '0#', t+4.0, 3)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '4#', t+6.0, 1)
+
+            note(1, '0#', t-1.0, 0.5)
+            note(1, '1', t-0.5, 0.5)
+            note(1, '2',  t+0.0, 3)
+            note(1, '1',  t+3.0, 0.5)
+            note(1, '0#', t+3.5, 0.5)
+            note(0, '6', t+4.0, 3)
+
+            t += 8
+
+            note(0, '5', t-0.4, 0.4)
+            note(1, '0#', t-0.2, 0.4)
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, .5)
+            note(1, '5',  t+1.5, 1)
+            note(0, '5',  t+2.5, .5)
+            note(1, '4#',  t+3.0, .5)
+            note(1, '5',  t+3.5, 1)
+            note(0, '5',  t+4.5, .5)
+            note(1, '2',  t+5.0, .5)
+            note(1, '5',  t+5.5, 1)
+
+            note(0, '5',  t+6.5, .5)
+            note(1, '1',  t+7.0, .5)
+            note(0, '5',  t+7.5, .5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(0, '6',  t-0.2, 0.4)
+            note(1, '0#',  t+0.0, 1)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(2, '0#',  t+3.0, 1)
+            note(1, '6',  t+4.0, 1)
+            note(1, '2',  t+5.0, 1)
+            note(1, '6',  t+5.8, 0.4)
+            note(2, '0#',  t+6.0, 0.4)
+            note(1, '6',  t+6.2, 0.8)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 3)
+            note(1, '2',  t+0.0, 3)
+
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6',  t+3.5, 0.5)
+            note(1, '0#',  t+4.0, 1)
+            note(0, '2',  t+5.0, 1)
+            note(0, '5',  t+6.0, 1)
+            note(1, '0#',  t+7.0, .5)
+            note(1, '1',  t+7.5, .5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '2',  t+0.0, 1)
+            note(0, '2',  t+1.0, 1)
+            note(1, '0#',  t+2.0, 1)
+            note(1, '1',  t+3.0, 0.5)
+            note(1, '0#',  t+3.5, 0.5)
+            note(0, '6',  t+4.0, 2)
+
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '6',  t+6.5, 0.5)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '6',  t+2.5, 0.5)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '6',  t+6.5, 0.5)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '6',  t+6.5, 0.5)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '6',  t+2.5, 0.5)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '6',  t+6.5, 0.5)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            #>> SECOND PAGE
+
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.75)
+            note(1, '6',  t+2.75, 0.25)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.75)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(1, '5',  t+6.0, 0.75)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.75)
+            note(1, '6',  t+2.75, 0.25)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '6',  t+6.5, 0.5)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            # second line
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1+4)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(0, '4#',  t+6.0, 1)
+            note(0, '2',  t+7.0, 1+3)
+
+            # SECOND PART (C)
+
+            t += 11
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(0, '5', t-1.0, 0.5)
+            note(1, '0#', t-0.5, 0.5)
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, .5)
+            note(1, '5',  t+1.5, 1)
+            note(0, '5',  t+2.5, .5)
+            note(1, '4#',  t+3.0, .5)
+            note(1, '5',  t+3.5, 1)
+            note(0, '5',  t+4.5, .5)
+            note(1, '2',  t+5.0, .5)
+            note(1, '5',  t+5.5, 1)
+
+            note(0, '5',  t+6.5, .5)
+            note(1, '1',  t+7.0, .5)
+            note(0, '5',  t+7.5, .5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-1, '4#', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(0, '6',  t-0.2, 0.4)
+            note(1, '0#',  t+0.0, 1)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(0, '5',  t+2.0, 1)
+            note(1, '0#',  t+3.0, 1)
+            note(0, '4#',  t+4.0, 3)
+            note(0, '6',  t+4.0, 3)
+
+            t += 8
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 3)
+            note(-1, '1', t+4.0, 1)
+            note(0, '2', t+5.0, 2)
+            note(0, '2', t+7.0, 1)
+
+            note(0, '5', t-1.0, 0.5)
+            note(0, '4#', t-0.5, 0.5)
+            note(0, '5',  t+0.0, 2.5)
+            note(0, '2',  t+0.0, 2.5)
+            note(0, '2', t+2.5, 0.5)
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6', t+3.5, 0.5)
+            note(1, '0#', t+4.0, 0.5)
+            note(0, '2', t+4.5, 0.5)
+            note(0, '5',  t+5.0, 0.5)
+            note(0, '6', t+5.5, 0.5)
+            note(1, '0#', t+6.0, 0.5)
+            note(0, '2',  t+6.5, 0.5)
+            note(1, '0#', t+7.0, 0.5)
+            note(1, '1', t+7.5, 0.5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '5', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 2)
+
+            note(1, '2', t+0.0, 0.5)
+            note(0, '2', t+0.5, 0.5)
+            note(1, '0#', t+1.0, 0.5)
+            note(1, '1', t+1.5, 0.5)
+            note(1, '2', t+2.0, 0.5)
+            note(0, '2', t+2.5, 0.5)
+            note(1, '1', t+3.0, 0.5)
+            note(1, '0#', t+3.5, 0.5)
+            note(0, '6', t+4.0, 0.5)
+            note(0, '2', t+4.5, 0.5)
+            note(1, '1', t+5.0, 0.5)
+            note(1, '0#', t+5.5, 0.5)
+            note(0, '6', t+6.0, 1)
+            note(0, '4#', t+7.0, 1)
+
+            t += 8
+
+            note(0, '5', t-0.4, 0.4)
+            note(1, '0#', t-0.2, 0.4)
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#', t+1.0, .5)
+            note(1, '5',  t+1.5, 1)
+            note(0, '5',  t+2.5, .5)
+            note(1, '4#',  t+3.0, .5)
+            note(1, '5',  t+3.5, 1)
+            note(0, '5',  t+4.5, .5)
+            note(1, '2',  t+5.0, .5)
+            note(1, '5',  t+5.5, 1)
+
+            note(0, '5',  t+6.5, .5)
+            note(1, '1',  t+7.0, .5)
+            note(0, '5',  t+7.5, .5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+
+            note(0, '6',  t-0.2, 0.4)
+            note(1, '0#',  t+0.0, 1)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(2, '0#',  t+3.0, 1)
+            note(1, '6',  t+4.0, 1)
+            note(1, '2',  t+5.0, 1)
+            note(1, '6',  t+5.8, 0.4)
+            note(2, '0#',  t+6.0, 0.4)
+            note(1, '6',  t+6.2, 0.8)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8
+
+            # FOURTH LINE SECOND PAGE SECOND TACT
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 2)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 3)
+            note(1, '2',  t+0.0, 3)
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6', t+3.5, 0.5)
+            note(1, '0#', t+4.0, 0.5)
+            note(0, '2', t+4.5, 0.5)
+            note(0, '5',  t+5.0, 0.5)
+            note(0, '6', t+5.5, 0.5)
+            note(1, '0#', t+6.0, 0.5)
+            note(0, '2',  t+6.5, 0.5)
+            note(1, '0#', t+7.0, 0.5)
+            note(1, '1', t+7.5, 0.5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-2, '2', t+4.0, 1)
+            note(-2, '6', t+5.0, 1)
+            note(-1, '4#', t+6.0, 1)
+            note(-2, '2', t+7.0, 1)
+
+            note(1, '2', t+0.0, 0.5)
+            note(0, '2', t+0.5, 0.5)
+            note(1, '0#', t+1.0, 0.5)
+            note(1, '1', t+1.5, 0.5)
+            note(1, '2', t+2.0, 0.5)
+            note(0, '2', t+2.5, 0.5)
+            note(1, '1', t+3.0, 0.5)
+            note(1, '0#', t+3.5, 0.5)
+            note(0, '6', t+4.0, 0.5)
+            note(0, '2', t+4.5, 0.5)
+            note(1, '1', t+5.0, 0.5)
+            note(1, '0#', t+5.5, 0.5)
+
+            note(1, '5', t+6.0, 0.5)
+            note(1, '6', t+6.5, 0.5)
+            note(1, '5', t+7.0, 0.5)
+            note(1, '4#', t+7.5, 0.5)
+
+            # LAST LINE
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '4#',  t+0.0, 0.2)
+            note(1, '5',  t+0.2, 0.3)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '5',  t+2.5, 0.25)
+            note(1, '6',  t+2.75, 0.25)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.3)
+            note(1, '6',  t+2.8, 0.2) # (c)
+            note(2, '0#',  t+3.0, 0.2) # (c)
+            note(1, '6',  t+3.2, 0.3)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 0.5)
+            note(0, '6',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '6',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            # THIRD PAGE
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '4#',  t+0.0, 0.2)
+            note(1, '5',  t+0.2, 0.3)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '5',  t+2.5, 0.25)
+            note(1, '6',  t+2.75, 0.25)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.3)
+            note(1, '6',  t+2.8, 0.2) # (c)
+            note(2, '0#',  t+3.0, 0.2) # (c)
+            note(1, '6',  t+3.2, 0.3)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 0.5)
+            note(0, '6',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '6',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            # SECOND LINE
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '6',  t+2.5, 0.5)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '2', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            # THIRD LINE
+            t += 8.0
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 1)
+            note(-1, '3#', t+3.0, 1)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(0, '5',  t+0.5, 0.5)
+            note(1, '2',  t+1.0, 0.5)
+            note(0, '5',  t+1.5, 0.5)
+            note(1, '5',  t+2.0, 0.5)
+            note(1, '5',  t+2.5, 0.25)
+            note(1, '6',  t+2.75, 0.25)
+            note(1, '5',  t+3.0, 0.5)
+            note(1, '4#',  t+3.5, 0.5)
+            note(1, '5',  t+4.0, 0.5)
+            note(0, '5',  t+4.5, 0.5)
+            note(1, '2',  t+5.0, 0.5)
+            note(0, '5',  t+5.5, 0.5)
+            note(1, '5',  t+6.0, 0.5)
+            note(1, '5',  t+6.5, 0.25)
+            note(1, '6',  t+6.75, 0.25)
+            note(1, '5',  t+7.0, 0.5)
+            note(1, '4#',  t+7.5, 0.5)
+
+            t += 8.0
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 1)
+            note(-2, '5', t+3.0, 1)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '2', t+6.0, 2)
+
+            note(1, '5',  t+0.0, 0.5)
+            note(1, '6',  t+0.5, 0.5)
+            note(2, '0#',  t+1.0, 0.5)
+            note(2, '1',  t+1.5, 0.5)
+            note(2, '2',  t+2.0, 0.5)
+            note(2, '0#',  t+2.5, 0.5)
+            note(1, '6',  t+3.0, 0.5)
+            note(1, '5',  t+3.5, 0.5)
+            note(1, '4#',  t+4.0, 1)
+            note(0, '6',  t+5.0, 1)
+            note(0, '4#',  t+6.0, 1)
+            note(0, '2',  t+7.0, 1)
+
+            # END PART...
+            t += 8
+
+            note(0, '5', t-0.4, 0.4)
+            note(1, '0#', t-0.2, 0.4)
+
+            note(-1, '3#', t+0.0, 4)
+            note(0, '0#', t+0.0, 4)
+            note(-1, '3#', t+4.0, 1)
+            note(0, '1', t+5.0, 1)
+            note(0, '3#', t+6.0, 1)
+            note(-1, '3#', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#',  t+1.0, 1)
+            note(1, '5',  t+2.0, 1)
+            note(1, '4#',  t+3.0, 1)
+            note(1, '5',  t+4.0, 1)
+            note(1, '0#',  t+4.0, 1)
+            note(1, '2',  t+5.0, 1)
+            note(1, '5',  t+6.0, 1)
+            note(1, '1',  t+7.0, 1)
+
+            t += 8
+
+            note(-1, '2', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '5', t+2.0, 2)
+            note(0, '2', t+4.0, 4)
+            note(0, '4#', t+4.0, 4)
+
+            note(1, '0#',  t+0.0, 1)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(1, '0#',  t+3.0, 1)
+            note(0, '6',  t+4.0, 2)
+
+            note(0, '5',  t+4.0, 1)
+            note(0, '4#',  t+4.0, 1)
+
+            t += 8
+
+            note(-2, '2', t+0.0, 1)
+            note(-1, '0#', t+1.0, 3)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 2)
+
+            note(0, '0#',  t+0.0, 2)
+            note(0, '2',  t+0.2, 1.8)
+            note(0, '5',  t+0.4, 1.6)
+            note(0, '2',  t+2.0, 1)
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6',  t+3.5, 0.5)
+            note(1, '0#',  t+4.0, 1)
+            note(0, '2',  t+5.0, 1)
+            note(0, '5',  t+6.0, 1)
+            note(1, '0#',  t+7.0, 0.5)
+            note(1, '1',  t+7.5, 0.5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 2)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '4#', t+6.0, 2)
+
+            note(1, '2',  t+0.0, 1)
+            note(0, '2',  t+1.0, 1)
+            note(1, '0#',  t+2.0, 1)
+            note(1, '1',  t+3.0, 0.5)
+            note(1, '0#',  t+3.5, 0.5)
+            note(0, '6',  t+4.0, 3)
+
+            t += 8
+
+            note(0, '5', t-1.0, 0.5)
+            note(1, '0#', t-0.5, 0.5)
+
+            note(-1, '3#', t+0.0, 1)
+            note(0, '0#', t+1.0, 1)
+            note(0, '3#', t+2.0, 2)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '2', t+6.0, 1)
+            note(-1, '1', t+7.0, 1)
+
+            note(1, '5',  t+0.0, 1)
+            note(1, '4#',  t+1.0, 1)
+            note(1, '5',  t+2.0, 1)
+            note(1, '4#',  t+3.0, 1)
+            note(1, '0#',  t+4.0, 2)
+            note(1, '2',  t+4.2, 0.8)
+            note(1, '5',  t+4.4, 1.6)
+            note(1, '2',  t+5.0, 1)
+            note(1, '5',  t+6.0, 1)
+            note(1, '1',  t+7.0, 0.8)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 2)
+            note(-1, '2', t+4.0, 1)
+            note(-1, '6', t+5.0, 1)
+            note(0, '4#', t+6.0, 2)
+
+            note(0, '6',  t-0.2, 0.4)
+            note(1, '0#',  t+0.2, 0.8)
+            note(1, '1',  t+1.0, 1)
+            note(1, '2',  t+2.0, 1)
+            note(2, '0#',  t+3.0, 1)
+            note(1, '6',  t+4.0, 3)
+            note(1, '2',  t+4.0, 3)
+
+            t += 8
+
+            note(0, '5', t-1.0, 0.5)
+            note(0, '4#', t-0.5, 0.5)
+
+            note(-2, '3#', t+0.0, 1)
+            note(-1, '0#', t+1.0, 1)
+            note(-1, '3#', t+2.0, 2)
+            note(-1, '1', t+4.0, 1)
+            note(-1, '5', t+5.0, 1)
+            note(0, '1', t+6.0, 2)
+
+            note(0, '5',  t+0.0, 3)
+            note(0, '2',  t+0.0, 3)
+            note(0, '5',  t+3.0, 0.5)
+            note(0, '6',  t+3.5, 0.5)
+            note(1, '0#',  t+4.0, 1)
+            note(0, '2',  t+5.0, 1)
+            note(0, '5',  t+6.0, 1)
+            note(1, '0#',  t+7.0, 0.5)
+            note(1, '1',  t+7.5, 0.5)
+
+            t += 8
+
+            note(-2, '5', t+0.0, 1)
+            note(-1, '2', t+1.0, 1)
+            note(0, '0#', t+2.0, 2)
+            note(-2, '2', t+4.0, 1)
+            note(-2, '6', t+5.0, 1)
+            note(-1, '4#', t+6.0, 2)
+
+            note(1, '2',  t+0.0, 1)
+            note(0, '2',  t+1.0, 1)
+            note(0, '5',  t+2.0, 1)
+            note(1, '1',  t+3.0, 0.5)
+            note(1, '0#',  t+3.5, 0.5)
+            note(0, '6',  t+4.0, 2)
+            note(0, '2',  t+6.0, 2)
+
+            # last tact
+            t += 8
+
+            note(-2, '3#', t+0.0, 1)
+            note(-1, '0#', t+1.0, 1)
+            note(-1, '3#', t+2.0, 2+8)
+
+            note(0, '5',  t+0.0, 1)
+            note(-1, '5',  t+1.0, 1)
+            note(0, '0#',  t+2.0, 1)
+            note(0, '3#',  t+3.0, 1)
+            note(0, '5',  t+4.0, 8)
+
+
         if what == 't':
-            lm = 2.0
+            lm = 1.0
             tsoy()
-        else:
+        elif what == 'm':
             lm = 2.0
             metal1()
+        else: # 'r'
+            lm = 4.0
+            river()
 
-        return self.x.sound
+        return
 
     def compile(self):
         print(f'{self.x.freq.len} notes...\n')
@@ -820,3 +1768,43 @@ class TrackProject:
             self.resize()
             self.draw()
             self.events()
+
+
+
+
+
+climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+climplib.kernel.argtypes = [
+    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
+    ctypes.c_size_t,
+    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+    ctypes.c_size_t,
+]
+climplib.kernel.restype = ctypes.c_int
+
+
+
+c = TrackProject(climplib.kernel)
+c.create('r')
+
+t = -time.time()
+raw = c.x.compile()
+t += time.time()
+print(f"Used Time: {t}s.")
+
+raw = np.tanh(raw)
+raw *= 32767.0
+raw = raw.astype(dtype=np.int16)
+raw = np.column_stack((raw, raw))
+# export sound
+raw = raw.copy(order='C')
+
+pygame.init()
+
+sound = pygame.sndarray.make_sound(raw)
+sound.play()
+while 1:
+    ...

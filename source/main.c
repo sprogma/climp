@@ -15,24 +15,40 @@
 
 
 void DLL_EXPORT kernel(
-    struct instrument *instruments;
-    size_t instruments_len,
     float *dst,
-    size_t dst_len,
-    struct input_note *notes,
-    size_t notes_len,
-    float base_freq
+    int dst_len,
+    // notes
+    float *times,
+    float *lengths,
+    float *freqs,
+    float *volumes,
+    int notes_len
 )
 {
-
+    int err;
     struct track t;
-    climp_load_track(&t, dst, dst_len, notes, notes_len, base_freq);
 
 
-    climp_process_track_software(&t);
+    // init connection
+    err = climp_connect();
+    if (err) { fprintf(stderr, "Error in connection. Failed to load DLL."); return;}
 
-    fflush(stdout);
-    fflush(stderr);
+
+    // load track
+    err = climp_track_load(&t, dst, dst_len, times, lengths, freqs, volumes, notes_len);
+    if (err)
+    {
+        fprintf(stderr, "error at loading.\n");
+        return;
+    }
+
+    // process
+    err = climp_track_process(&t);
+    if (err)
+    {
+        fprintf(stderr, "error at processing.\n");
+        return;
+    }
 
     return;
 }
@@ -63,3 +79,19 @@ DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpv
     }
     return TRUE; // succesful
 }
+
+/*int main()
+{
+    int err;
+    err = climp_connect();
+
+    float t[2] = {0.0};
+    float l[2] = {0.001};
+    float f[2] = {440.0};
+    float v[2] = {1.0};
+    float x[2000];
+    kernel(x, 1000, t, l, f, v, 1);
+
+    if (err) { fprintf(stderr, "Error in connection. Failed to load DLL."); return FALSE; }
+    return 0;
+}*/
