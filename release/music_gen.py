@@ -53,6 +53,7 @@ class GeneratorTone:
 class Generator:
     def __init__(self, api_function):
         self.api_function = api_function
+        self.kernel = ""
         self.inputs: [GeneratorTone] = []
 
     def add(self, item):
@@ -86,168 +87,43 @@ class Generator:
         return result
 
 
-class ProjectNote:
-    def __init__(self, instrument, frequency, time, length, volume=1.0):
+class SynthesizerProjectTone:
+    def __init__(self, instrument, frequency, time, length, volume):
         self.instrument = instrument
-        self.freq = frequency
+        self.frequency = frequency
         self.time = time
         self.length = length
         self.volume = volume
 
 
-class ProjectToneTemplateItem:
-    def __init__(self, frequency, time_start, length, volume):
-        self.freq = frequency
-        self.time = time_start
-        self.length = length
-        self.volume = volume
-
-
-class ProjectToneTemplate:
-    def __init__(self, iterable: []):
-        self.tones : [ProjectToneTemplateItem] = iterable
-
-    def to_notes(self, tone):
-        notes = []
-        for i in self.tones:
-            notes.append(ProjectNote(
-                tone.instrument,
-                tone.freq * i.freq.multiply + i.freq.shift,
-                tone.time + tone.l * i.time.multiply + i.time.shift,
-                tone.length * i.length.multiply + i.length.shift,
-                tone.volume * i.volume.multiply + i.volume.shift,
-            ))
-        return notes
-
-
-class ProjectTone:
-    def __init__(self, instrument, tone_template, time, length, frequency=440.0, volume=1.0):
-        self.template = tone_template
-        self.time = time
-        self.length = length
-        self.instrument = instrument
-        self.freq = frequency
-        self.volume = volume
-
-
-class TrackProject:
+class SynthesizerProject:
     def __init__(self, api_function):
         self.x = Generator(api_function)
         self.rw, self.lw = 0, 0
         self.w, self.h = 0, 0
         self.d = jsd()
-        self.tones = [[], [], [], [], [], [], [], []]  # tones
-        self.temps = []  # tone templates
+        self.tones: [SynthesizerProjectTone] = []
+
 
     def draw(self):
         sc.clear()
+        self.tones.sort(key=lambda x: x.time)
+        self.d.visual.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
         self.draw_tones()
 
-    def correct_camera_to_tone(self, tone, tone_id, tone_chanel):
-        rows = int(tone.time / self.d.visual.time_per_line) * (self.d.visual.chanels + 1) + tone_chanel
-
-        # correct cy
-        self.d.visual.cy = max(self.d.visual.cy, rows - (self.h - 10))
-        self.d.visual.cy = min(self.d.visual.cy, rows - 10)
-
     def draw_tones(self):
-        for chanel in self.tones:
-            chanel.sort(key=lambda x: x.time)
-        self.d.visual.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
-
-        def draw_tone(tone, tone_id, tone_chanel, selected=False):
-            ttime = tone.time
-            ltime = tone.length
-            # for each symbol
-            rows = int(ttime / self.d.visual.time_per_line)
-            ttime -= rows * self.d.visual.time_per_line
-            while ltime > 0.00001: # ! eps*10
-                block_len = ltime
-                if ltime - 0.000001 > self.d.visual.time_per_line - ttime:
-                    block_len = self.d.visual.time_per_line - ttime
-                w_block_len = block_len / self.d.visual.time_per_line * self.rw
-
-                if block_len > 0.000001: # if is not strange block
-                    # draw tone line
-                    xpos = ttime / self.d.visual.time_per_line * self.rw
-                    llen = int(xpos + w_block_len + 0.5) - int(xpos + 0.5)
-                    ll = f'{tone.template:{llen}}'
-                    if len(ll) > llen:
-                        ll = ll[:llen - 1] + '>'
-                    int_xpos = int(xpos + 0.5)
-                    addstr(
-                        rows * (self.d.visual.chanels + 1) + tone_chanel - self.d.visual.cy,
-                        self.lw + int_xpos,
-                        ll,
-                        c.gen.note.selected
-                        if selected else
-                        (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
-                    )
-
-                # next line
-                ttime += block_len
-                ltime -= block_len
-                if ttime + 0.000001 > self.d.visual.time_per_line:
-                    ttime -= self.d.visual.time_per_line
-                    rows += 1
-
-        def draw_time():
-            t = self.d.visual.draw_time
-            rows = int(t / self.d.visual.time_per_line)
-            xpos = int((t - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw + 0.5)
-            for i in range(self.d.visual.chanels):
-                y = rows * (self.d.visual.chanels + 1) + i - self.d.visual.cy
-                x = xpos
-                if 0 <= x < self.rw and 0 <= y < self.h:
-                    sc.chgat(y, self.lw + x, 1, curses.color_pair(c.gen.timeline))
-
-        #draw lines
-
-        for chanel_id, chanel in enumerate(self.tones):
-            for i, tone in enumerate(chanel):
-                draw_tone(tone, i, chanel_id)
-
-        for i in range(0, self.h):
-            if (i + self.d.visual.cy) % (self.d.visual.chanels + 1) == self.d.visual.chanels:
-                addstr(i, self.lw, '_' * self.rw, c.gen.text)
-
-        # draw selection
-        draw_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
-                  self.d.visual.selection.position,
-                  self.d.visual.selection.chanel, selected=True)
-
-        # draw time
-        draw_time()
-
-    def move_selection_mod(self, direction):
-        def get_x_dist(x1, x2, y1, y2):
-            if y1 <= x1 <= y2 or y1 <= x2 <= y2 or x1 <= y1 <= x2 or x1 <= y2 <= x2:
-                return -(min(x2, y2) - max(x1, y1)) * 0.001
-            return min(abs(x1 - y1), abs(x2 - y2))
-        selected_tone = self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position]
-        rows = int(selected_tone.time / self.d.visual.time_per_line)
-        xpos = int((selected_tone.time - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
-        xendpos = int((selected_tone.time + selected_tone.length - rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
-        rows = rows * (self.d.visual.chanels + 1) + self.d.visual.selection.chanel
-        mind = float('inf')
-        sel = None
-        for chanel_id, chanel in enumerate(self.tones):
-            for i, tone in enumerate(chanel):
-                tone_rows = int(tone.time / self.d.visual.time_per_line)
-                tone_xpos = int((tone.time - tone_rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
-                tone_xendpos = int((tone.time + tone.length - tone_rows * self.d.visual.time_per_line) / self.d.visual.time_per_line * self.rw)
-                tone_rows = tone_rows * (self.d.visual.chanels + 1) + chanel_id
-                xdist = get_x_dist(xpos, xendpos, tone_xpos, tone_xendpos)
-                if xdist < 2 * abs(rows - tone_rows):
-                    if (direction == -1 and tone_rows < rows) or \
-                       (direction ==  1 and tone_rows > rows):
-                        d = abs(rows - tone_rows) + xdist
-                        if d < mind:
-                            mind = d
-                            sel = chanel_id, i
-        if sel is not None:
-            self.d.visual.selection.chanel = sel[0]
-            self.d.visual.selection.position = sel[1]
+        for i in self.tones:
+            ...
+        return
+        addstr(
+            rows * (self.d.visual.chanels + 1) + tone_chanel - self.d.visual.cy,
+            self.lw + int_xpos,
+            ll,
+            c.gen.note.selected
+            if selected else
+            (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
+        )
+        sc.chgat(y, self.lw + x, 1, curses.color_pair(c.gen.timeline))
 
     def events(self):
         key = 0
@@ -259,30 +135,6 @@ class TrackProject:
                 curses.resize_term(*sc.getmaxyx())
                 sc.clear()
                 sc.refresh()
-            if key == curses.KEY_UP:
-                self.move_selection_mod(-1)
-                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
-                                            self.d.visual.selection.position,
-                                            self.d.visual.selection.chanel)
-            if key == curses.KEY_DOWN:
-                self.move_selection_mod(1)
-                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
-                                            self.d.visual.selection.position,
-                                            self.d.visual.selection.chanel)
-            if key == curses.KEY_RIGHT:
-                self.d.visual.selection.position += 1
-                if self.d.visual.selection.position >= len(self.tones[self.d.visual.selection.chanel]):
-                    self.d.visual.selection.position = len(self.tones[self.d.visual.selection.chanel]) - 1
-                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
-                                            self.d.visual.selection.position,
-                                            self.d.visual.selection.chanel)
-            if key == curses.KEY_LEFT:
-                self.d.visual.selection.position -= 1
-                if self.d.visual.selection.position < 0:
-                    self.d.visual.selection.position = 0
-                self.correct_camera_to_tone(self.tones[self.d.visual.selection.chanel][self.d.visual.selection.position],
-                                            self.d.visual.selection.position,
-                                            self.d.visual.selection.chanel)
 
     def create(self, what, dt=0.25):
         lm = 1
@@ -291,12 +143,15 @@ class TrackProject:
         MODE_LINEAR = 0
         MODE_NOISE = 1
 
-        sndvlm = []
-        sndvlm.append([1.0, 1.0])
-        for i in range(1):
-            sndvlm.append([2**i, 1.0/(i+1.0) + 0.5])
-        for i in range(3):
-            sndvlm.append([1/(2**i), 1.0/(i + 2.0) + 1.0])
+        sndvlm = [
+            [4.0, 0.3],
+            [3.0, 0.05],
+            [2.0, 0.5],
+            [1.0, 1.0],
+            [0.5, 1.0],
+            [0.25, 1.0],
+            [0.125, 3.0]
+        ]
 
         v = 0.5
         sss = sum(map(lambda x: x[1], sndvlm))
@@ -319,24 +174,15 @@ class TrackProject:
                 #self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
                 self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
             return t + l
-            for i in range(28):
-                f = fq * (i + 1) / 2.0
-                v = volume * 4/28
-                if i not in (1, 2, 4, 8, 16, 32):
-                    v /= 1.1 ** i
-                #self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
-                self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
-            return t + l
 
         def add(t, fq, l=1.0, volume=1.0):
-            self.tones[randint(0, 6)].append(ProjectTone(None, str(fq), t * dt, l * dt))
+            self.tones.append(SynthesizerProjectTone(0, fq, t, l, volume))
             return addcc(t, fq, l, volume)
 
         def addc(t, ch, l=1):
             for cc, i in enumerate(sorted(ch)):
                 ovh = l * 0.05 * cc
                 addcc(t + ovh, i, l - ovh, volume=2.0 / len(ch))
-            self.tones[randint(0, 6)].append(ProjectTone(None, "ch"+str(ch[0]), t * dt, l * dt))
             return t + l
 
         def mx(fq, oct):
@@ -347,7 +193,6 @@ class TrackProject:
             #    f = 5550 + i * 116.1251261261261
             #self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
             #self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,5.0,112525951259179.12512951251))
-            self.tones[7].append(ProjectTone(None, '###', t * dt, l * dt))
             return t + l
 
         # notes
@@ -1736,75 +1581,33 @@ class TrackProject:
     def run(self):
 
         self.d = jsd(
+            track_time=0.0,
             visual=jsd(
-                cy=-1,
-                chanels=8,
-                time_per_line=4.0,
-                scroll_step=3,
-                draw_time=0.0,
-                selection=jsd( # multiple selection is not implemented
-                    chanel=2,
-                    position=5,
+                selection=jsd(
+                    pos=None
                 )
             ),
             time_start=0
         )
-        self.tones = [[] for x in range(self.d.visual.chanels)]
-
-        self.create('m', dt=0.5)
-        self.compile()
-        self.x.sound.play()
+        self.tones = []
         self.d.time_start = pygame.time.get_ticks()
 
-        #self.tones.append(ProjectTone(None, 'C#', 0, 0.0, 1.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'A#', 0, 1.0, 1.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'Am', 1, 2.0, 1.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'A', 0, 2.0, 2.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'Am', 1, 4.0, 3.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'C', 0, 5.0, 1.0, 440.0))
-        #self.tones.append(ProjectTone(None, 'Em', 0, 6.0, 2.0, 440.0))
+        self.create('r')
+        t = -time.time()
+        raw = self.x.compile()
+        t += time.time()
+        print(f"Used Time: {t}s.")
+        raw = np.tanh(raw)
+        raw *= 32767.0
+        raw = raw.astype(dtype=np.int16)
+        raw = np.column_stack((raw, raw))
+        # export sound
+        raw = raw.copy(order='C')
+        pygame.init()
+        sound = pygame.sndarray.make_sound(raw)
+        sound.play()
 
         while True:
             self.resize()
             self.draw()
             self.events()
-
-
-
-
-
-climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
-climplib.kernel.argtypes = [
-    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
-    ctypes.c_size_t,
-    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-    np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-    ctypes.c_size_t,
-]
-climplib.kernel.restype = ctypes.c_int
-
-
-
-c = TrackProject(climplib.kernel)
-c.create('r')
-
-t = -time.time()
-raw = c.x.compile()
-t += time.time()
-print(f"Used Time: {t}s.")
-
-raw = np.tanh(raw)
-raw *= 32767.0
-raw = raw.astype(dtype=np.int16)
-raw = np.column_stack((raw, raw))
-# export sound
-raw = raw.copy(order='C')
-
-pygame.init()
-
-sound = pygame.sndarray.make_sound(raw)
-sound.play()
-while 1:
-    ...

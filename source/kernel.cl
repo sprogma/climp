@@ -32,8 +32,10 @@ kernel void generation_kernel( __global float *dest,
         {
             float v = notes[n].volume, k = 1.0f - (float)(s - notes[n].start) / 44100.0f;//(float)(notes[n].end - notes[n].start);
             v *= fmax(0.01f, k);
-            dr = sin(s * notes[n].frequency / 44100.0f * 3.1415926f); // *= 2.0f ?
-            res += v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+            float _;
+            dr = fract(s * notes[n].frequency / 44100.0f * 0.5, &_); // *2.0-1.0 // *= 3.1415926f * 2.0f ?
+            dr = (dr-fabs(2*dr-0.5)+0.125)/(0.75*0.5);
+            res += v*(smoothstep(-0.1, 0.1, dr)*2.0-1.0);
         }
         note++;
     }

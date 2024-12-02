@@ -20,7 +20,7 @@ import ctypes
 # from music_gen import *
 
 import music_class
-# import music_gen
+import music_gen
 #music_gen_path = pathlib.Path(__file__).parent.joinpath('./music_gen.py')
 #with open(str(music_gen_path), 'r') as f:
 #    exec(f.read())
@@ -53,7 +53,6 @@ DRAW HELPER
 
 def lib_linkage():
     music_class.log = log
-    return
     music_gen.addstr = addstr
     music_gen.c = c
     music_gen.sc = sc
@@ -972,8 +971,8 @@ class Application:
 
         lib_linkage()
 
-        #x = music_gen.TrackProject(climplib.kernel)
-        #x.run()
+        x = music_gen.SynthesizerProject(climplib.kernel)
+        x.run()
         #x.create('m')
         #self.lists[self.d.list.album].add(x.x.sound)
         #x = music_gen.TrackProject(climplib.kernel)
@@ -1362,16 +1361,16 @@ for function_import in music_class.FUNCTIONS:
 
 if __name__ == "__main__":
 
-    # climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
-    # climplib.kernel.argtypes = [
-    #     np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
-    #     ctypes.c_size_t,
-    #     np.ctypeslib.ndpointer(dtype=np.float32, ndim=2, flags='C_CONTIGUOUS'),  # notes
-    #     np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # tools
-    #     np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # start
-    #     ctypes.c_size_t,
-    #     ctypes.c_int32,
-    # ]
-    # climplib.kernel.restype = ctypes.c_int
+    climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+    climplib.kernel.argtypes = [
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
+        ctypes.c_size_t,
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        ctypes.c_size_t,
+    ]
+    climplib.kernel.restype = ctypes.c_int
     app = Application()
     curses.wrapper(app.run)
