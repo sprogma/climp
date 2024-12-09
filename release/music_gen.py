@@ -88,12 +88,24 @@ class Generator:
 
 
 class SynthesizerProjectTone:
-    def __init__(self, instrument, frequency, time, length, volume):
+    def __init__(self, instrument, frequency, time, length, volume, group):
         self.instrument = instrument
         self.frequency = frequency
         self.time = time
         self.length = length
         self.volume = volume
+        # meta
+        self.group = group
+
+
+class SynthesizerProjectTact:
+    def __init__(self, time):
+        self.time = time
+        self.notes: [SynthesizerProjectTone] = []
+
+    @property
+    def length(self):
+        return len(self.notes) + 2 # 2 - fictive notes (in start and in the end)
 
 
 class SynthesizerProject:
@@ -102,18 +114,47 @@ class SynthesizerProject:
         self.rw, self.lw = 0, 0
         self.w, self.h = 0, 0
         self.d = jsd()
-        self.tones: [SynthesizerProjectTone] = []
+        #self.tones: [SynthesizerProjectTone] = []
+        self.tacts: [SynthesizerProjectTact] = []
 
 
     def draw(self):
         sc.clear()
         self.tones.sort(key=lambda x: x.time)
-        self.d.visual.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
+        self.d.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
         self.draw_tones()
 
     def draw_tones(self):
-        for i in self.tones:
-            ...
+        line_height = 1+self.d.max_groups*2
+        line_width = 5
+
+        mus_y = math.inf
+        x, y = 0, -self.d.visual.cy
+        for i in self.tacts:
+            nx, ny = (x + i.length * line_width) % self.w, y + (x + i.length * line_width) // self.w * line_height
+            # if visible
+            if y <= -line_height <= ny or y <= self.h+line_height <= ny or -line_height <= y <= self.h+line_height:
+                # draw notes
+                for cnt, note in enumerate(i.notes, 1):
+                    px, py = (x + cnt * line_width) % self.w, y + (x + cnt * line_width) // self.w * line_height
+                    is_playing = self.d.draw_time > note.time and (self.d.draw_time - note.time) < note.length
+                    dy = note.group * 2 + 1
+                    addstr(py+dy, px, '|' + str(int(note.frequency)), 2 if is_playing else 0)
+                # /draw notes
+            # [get playing...]
+            for cnt, note in enumerate(i.notes, 1):
+                px, py = (x + cnt * line_width) % self.w, y + (x + cnt * line_width) // self.w * line_height
+                if self.d.draw_time > note.time and (self.d.draw_time - note.time) < note.length:
+                    mus_y = min(mus_y, py+self.d.visual.cy)
+            # move to next note
+            x, y = nx, ny
+            if self.w - x < self.w // 2:
+                y += line_height
+                x = 0
+        if self.d.visual.follow_music and mus_y != math.inf:
+            if self.d.visual.cy < mus_y - self.h * 2 // 3:
+                self.d.visual.cy = mus_y - self.h // 3
+
         return
         addstr(
             rows * (self.d.visual.chanels + 1) + tone_chanel - self.d.visual.cy,
@@ -135,8 +176,12 @@ class SynthesizerProject:
                 curses.resize_term(*sc.getmaxyx())
                 sc.clear()
                 sc.refresh()
+            if key == curses.KEY_UP:
+                self.d.visual.cy -= 1
+            if key == curses.KEY_DOWN:
+                self.d.visual.cy += 1
 
-    def create(self, what, dt=0.25):
+    def create(self, what, dt=0.25, X=False):
         lm = 1
         fqcorr = 0.5
 
@@ -149,14 +194,12 @@ class SynthesizerProject:
             [2.0, 0.5],
             [1.0, 1.0],
             [0.5, 1.0],
-            [0.25, 1.0],
-            [0.125, 3.0]
+            #[0.25, 1.0],
+            #[0.125, 3.0]
         ]
-
         v = 0.5
         sss = sum(map(lambda x: x[1], sndvlm))
         sndvlm = list(map(lambda x: (x[0], v * x[1] / sss), sndvlm))
-
         print(sndvlm)
 
         z = [0]*100
@@ -166,8 +209,50 @@ class SynthesizerProject:
             f = pow(2.0, (p-50)/4)
             print(f'{f:20.10f}', '#' * int(math.log(i + 0.1, 2.0)))
 
+        if X:
+            sndvlm = [
+                0.1,
+                0.03,
+                0.003,
+                0.07,
+                0.004,
+                0.02,
+                0.027,
+                0.013,
+                0.008,
+                0.0079,
+                0.0076,
+                0.0075,
+                0.0005,
+                0.004
+            ]
+
+        def tact(time=None):
+            self.tacts.append(SynthesizerProjectTact(time))
 
         def addcc(t, fq, l=1.0, volume=1.0):
+            EPS = 0.001
+            ar = [0.5 * i for i in range(16)]
+            ar2 = [1.0 * i for i in range(16)]
+            if self.tacts[-1].time is not None:
+                nt = self.tacts[-1].time
+                if any(map(lambda x: abs(x - (t - nt)) < EPS, ar)):
+                    if any(map(lambda x: abs(x - (t - nt)) < EPS, ar2)):
+                        ...
+                    else:
+                        volume *= 0.9
+                else:
+                    volume *= 0.8
+            if X:
+                for i in range(len(sndvlm)):
+                    f = fq * (i + 1) * fqcorr
+                    v = sndvlm[i]*volume
+                    self.x.add(GeneratorTone(t * dt, dt*l*lm, v * 0.4 / 2.0 ** i, f))
+                for i in range(3):
+                    f = fq / 2 ** i
+                    v = 0.3*volume
+                    self.x.add(GeneratorTone(t * dt, dt*l*lm, v * 0.4 / 2.0 ** i, f))
+                return t + l
             for ffq, v in sndvlm:
                 f = fq * ffq
                 v *= volume
@@ -175,8 +260,8 @@ class SynthesizerProject:
                 self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
             return t + l
 
-        def add(t, fq, l=1.0, volume=1.0):
-            self.tones.append(SynthesizerProjectTone(0, fq, t, l, volume))
+        def add(t, fq, l=1.0, volume=1.0, group=0):
+            self.tacts[-1].notes.append(SynthesizerProjectTone(0, fq, t*dt, l*dt, volume, group))
             return addcc(t, fq, l, volume)
 
         def addc(t, ch, l=1):
@@ -193,6 +278,9 @@ class SynthesizerProject:
             #    f = 5550 + i * 116.1251261261261
             #self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
             #self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,5.0,112525951259179.12512951251))
+            v = 1.0
+            self.tacts[-1].notes.append(SynthesizerProjectTone(0, -1.0, t*dt, dt*l*lm*0.5, v, 1))
+            self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,v,-1.0))
             return t + l
 
         # notes
@@ -259,6 +347,7 @@ class SynthesizerProject:
             def skip():
                 nonlocal et
                 for i in range(4):
+                    tact()
                     add(et, mx(A, 1), l=1.5)
                     et += 0.025
                     add(et, mx(F, 1), l=1.5)
@@ -269,6 +358,7 @@ class SynthesizerProject:
                     et += 0.025
                     add(et, mx(D, 0), l=1.5)
 
+                    tact()
                     et += 1 - 0.025 * 4
 
                     add(et, mx(D, 0), l=1.5)
@@ -281,6 +371,7 @@ class SynthesizerProject:
                     et += 0.025
                     add(et, mx(A, 1), l=1.5)
 
+                    tact()
                     et += 1 - 0.025 * 4
 
                     add(et, mx(A, 1), l=1.5)
@@ -293,6 +384,7 @@ class SynthesizerProject:
                     et += 0.025
                     add(et, mx(D, 0), l=1.5)
 
+                    tact()
                     et += 1 - 0.025 * 4
 
                     add(et, mx(D, 0), l=1.5)
@@ -311,6 +403,7 @@ class SynthesizerProject:
                 global et
                 mult = 2.0
                 for i in range(2):
+                    tact()
                     addc(t + 0 * l + 8 * l * i, ch, l*mult)
                     addc(t + 1 * l + 8 * l * i, ch, l*mult)
                     bt(t + 2 * l + 8 * l * i, l)
@@ -352,6 +445,7 @@ class SynthesizerProject:
             def beat2(t, ch1, ch2, ch3, l=1):
                 global et
                 # play notes
+                tact()
                 add(t+l*0, ch1[0], l*6)
                 add(t+l*1, ch1[-3], l)
                 add(t+l*2, ch1[-2], l)
@@ -377,6 +471,7 @@ class SynthesizerProject:
             def beat22(t, ch1, ch2, ch3, l=1):
                 global et
                 # play notes
+                tact()
                 add(t+l*0, ch1[0], l*6)
                 add(t+l*1, ch1[-3], l)
                 add(t+l*2, ch1[-2], l)
@@ -400,6 +495,7 @@ class SynthesizerProject:
             def beat23(t, ch1, ch2, ch3, l=1):
                 global et
                 # play notes
+                tact()
                 add(t+l*0, ch1[0], l*3)
                 add(t+l*1, ch1[1], l)
                 add(t+l*2, ch1[-1], l)
@@ -510,11 +606,15 @@ class SynthesizerProject:
         def river():
             #    DO   DO#    RE   RE#   MI   FA   FA#   SO   SO#  LA   LA#    SI
             r = ['0', '0#', '1', '1#', '2', '3', '3#', '4', '4#', '5', '5#', '6']
-            ddt = 1.5
             def note(z, x, t, l):
-                add(t * ddt, 523.25 * pow(2, z + r.index(x) / 12), l * ddt, 1.0)
+                if z < 0 or z == 0 and x < '4':
+                    group = 1
+                else:
+                    group = 0
+                add(t, 523.25 * pow(2, z + r.index(x) / 12), l, 1.0, group)
 
             t = 0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -535,6 +635,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.0, 1+3.0)
 
             t += 12
+            tact(t)
 
             note(0, '5', t-1.0, 0.5)
             note(1, '0#', t-0.5, 0.5)
@@ -558,6 +659,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.0, 1+4)
 
             t += 12
+            tact(t)
 
             note(0, '5', t-1.0, 0.5)
             note(1, '0#', t-0.5, 0.5)
@@ -585,6 +687,7 @@ class SynthesizerProject:
             note(0, '5',  t+7.5, .5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -603,6 +706,7 @@ class SynthesizerProject:
             note(0, '6',  t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -620,6 +724,7 @@ class SynthesizerProject:
             note(1, '0#', t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -636,6 +741,7 @@ class SynthesizerProject:
             note(0, '6', t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(0, '5', t-0.4, 0.4)
             note(1, '0#', t-0.2, 0.4)
@@ -663,6 +769,7 @@ class SynthesizerProject:
             note(0, '5',  t+7.5, .5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -686,6 +793,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -707,6 +815,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.5, .5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -730,6 +839,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -758,6 +868,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -784,6 +895,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -812,6 +924,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -841,6 +954,7 @@ class SynthesizerProject:
             #>> SECOND PAGE
 
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -869,6 +983,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -895,6 +1010,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -923,6 +1039,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             # second line
 
@@ -950,6 +1067,7 @@ class SynthesizerProject:
             # SECOND PART (C)
 
             t += 11
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -976,6 +1094,7 @@ class SynthesizerProject:
             note(0, '5',  t+7.5, .5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -994,6 +1113,7 @@ class SynthesizerProject:
             note(0, '6',  t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 3)
@@ -1018,6 +1138,7 @@ class SynthesizerProject:
             note(1, '1', t+7.5, 0.5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1043,6 +1164,7 @@ class SynthesizerProject:
             note(0, '4#', t+7.0, 1)
 
             t += 8
+            tact(t)
 
             note(0, '5', t-0.4, 0.4)
             note(1, '0#', t-0.2, 0.4)
@@ -1070,6 +1192,7 @@ class SynthesizerProject:
             note(0, '5',  t+7.5, .5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1093,6 +1216,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8
+            tact(t)
 
             # FOURTH LINE SECOND PAGE SECOND TACT
 
@@ -1118,6 +1242,7 @@ class SynthesizerProject:
             note(1, '1', t+7.5, 0.5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1148,6 +1273,7 @@ class SynthesizerProject:
 
             # LAST LINE
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -1179,6 +1305,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1211,6 +1338,7 @@ class SynthesizerProject:
 
             # THIRD PAGE
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -1242,6 +1370,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1274,6 +1403,7 @@ class SynthesizerProject:
 
             # SECOND LINE
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -1303,6 +1433,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1331,6 +1462,7 @@ class SynthesizerProject:
 
             # THIRD LINE
             t += 8.0
+            tact(t)
 
             note(-1, '3#', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -1361,6 +1493,7 @@ class SynthesizerProject:
             note(1, '4#',  t+7.5, 0.5)
 
             t += 8.0
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1385,6 +1518,7 @@ class SynthesizerProject:
 
             # END PART...
             t += 8
+            tact(t)
 
             note(0, '5', t-0.4, 0.4)
             note(1, '0#', t-0.2, 0.4)
@@ -1407,6 +1541,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.0, 1)
 
             t += 8
+            tact(t)
 
             note(-1, '2', t+0.0, 1)
             note(0, '0#', t+1.0, 1)
@@ -1424,6 +1559,7 @@ class SynthesizerProject:
             note(0, '4#',  t+4.0, 1)
 
             t += 8
+            tact(t)
 
             note(-2, '2', t+0.0, 1)
             note(-1, '0#', t+1.0, 3)
@@ -1444,6 +1580,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.5, 0.5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1460,6 +1597,7 @@ class SynthesizerProject:
             note(0, '6',  t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(0, '5', t-1.0, 0.5)
             note(1, '0#', t-0.5, 0.5)
@@ -1484,6 +1622,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.0, 0.8)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1501,6 +1640,7 @@ class SynthesizerProject:
             note(1, '2',  t+4.0, 3)
 
             t += 8
+            tact(t)
 
             note(0, '5', t-1.0, 0.5)
             note(0, '4#', t-0.5, 0.5)
@@ -1523,6 +1663,7 @@ class SynthesizerProject:
             note(1, '1',  t+7.5, 0.5)
 
             t += 8
+            tact(t)
 
             note(-2, '5', t+0.0, 1)
             note(-1, '2', t+1.0, 1)
@@ -1541,6 +1682,7 @@ class SynthesizerProject:
 
             # last tact
             t += 8
+            tact(t)
 
             note(-2, '3#', t+0.0, 1)
             note(-1, '0#', t+1.0, 1)
@@ -1553,8 +1695,9 @@ class SynthesizerProject:
             note(0, '5',  t+4.0, 8)
 
 
+        tact()
         if what == 't':
-            lm = 1.0
+            lm = 1.25
             tsoy()
         elif what == 'm':
             lm = 2.0
@@ -1581,18 +1724,21 @@ class SynthesizerProject:
     def run(self):
 
         self.d = jsd(
-            track_time=0.0,
+            draw_time=0.0,
+            time_start=0,
             visual=jsd(
+                cy=0,
+                follow_music=True,
+                follow_music_time=0,
                 selection=jsd(
-                    pos=None
+                    pos=None,
                 )
             ),
-            time_start=0
+            max_groups=2
         )
         self.tones = []
-        self.d.time_start = pygame.time.get_ticks()
 
-        self.create('r')
+        self.create('r',dt=0.25*1.5)
         t = -time.time()
         raw = self.x.compile()
         t += time.time()
@@ -1606,6 +1752,7 @@ class SynthesizerProject:
         pygame.init()
         sound = pygame.sndarray.make_sound(raw)
         sound.play()
+        self.d.time_start = pygame.time.get_ticks()
 
         while True:
             self.resize()
