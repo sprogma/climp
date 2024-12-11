@@ -105,7 +105,16 @@ class SynthesizerProjectTact:
 
     @property
     def length(self):
-        return len(self.notes) + 2 # 2 - fictive notes (in start and in the end)
+        cnt = defaultdict(int)
+        for i in self.notes:
+            cnt[i.group] += 1
+        return max(cnt.values(), default=0) + 2 # 2 - fictive notes (in start and in the end)
+
+
+class SynthesizerTool:
+    def __init__(self, name, code=""):
+        self.name = name
+        self.code = code
 
 
 class SynthesizerProject:
@@ -114,17 +123,16 @@ class SynthesizerProject:
         self.rw, self.lw = 0, 0
         self.w, self.h = 0, 0
         self.d = jsd()
-        #self.tones: [SynthesizerProjectTone] = []
+        self.configs = jsd()
         self.tacts: [SynthesizerProjectTact] = []
-
 
     def draw(self):
         sc.clear()
-        self.tones.sort(key=lambda x: x.time)
+        self.tacts.sort(key=lambda x: x.time or -1)
         self.d.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
-        self.draw_tones()
+        self.draw_tacts()
 
-    def draw_tones(self):
+    def draw_tacts(self):
         line_height = 1+self.d.max_groups*2
         line_width = 5
 
@@ -134,9 +142,11 @@ class SynthesizerProject:
             nx, ny = (x + i.length * line_width) % self.w, y + (x + i.length * line_width) // self.w * line_height
             # if visible
             if y <= -line_height <= ny or y <= self.h+line_height <= ny or -line_height <= y <= self.h+line_height:
+                cnt = defaultdict(int)
                 # draw notes
-                for cnt, note in enumerate(i.notes, 1):
-                    px, py = (x + cnt * line_width) % self.w, y + (x + cnt * line_width) // self.w * line_height
+                for note in i.notes:
+                    cnt[note.group] += 1
+                    px, py = (x + cnt[note.group] * line_width) % self.w, y + (x + cnt[note.group] * line_width) // self.w * line_height
                     is_playing = self.d.draw_time > note.time and (self.d.draw_time - note.time) < note.length
                     dy = note.group * 2 + 1
                     addstr(py+dy, px, '|' + str(int(note.frequency)), 2 if is_playing else 0)
@@ -154,17 +164,6 @@ class SynthesizerProject:
         if self.d.visual.follow_music and mus_y != math.inf:
             if self.d.visual.cy < mus_y - self.h * 2 // 3:
                 self.d.visual.cy = mus_y - self.h // 3
-
-        return
-        addstr(
-            rows * (self.d.visual.chanels + 1) + tone_chanel - self.d.visual.cy,
-            self.lw + int_xpos,
-            ll,
-            c.gen.note.selected
-            if selected else
-            (c.gen.note.a if tone_id % 2 == 0 else c.gen.note.b)
-        )
-        sc.chgat(y, self.lw + x, 1, curses.color_pair(c.gen.timeline))
 
     def events(self):
         key = 0
@@ -261,13 +260,15 @@ class SynthesizerProject:
             return t + l
 
         def add(t, fq, l=1.0, volume=1.0, group=0):
+            if what == 'm' and fq <= 300:
+                group = 1
             self.tacts[-1].notes.append(SynthesizerProjectTone(0, fq, t*dt, l*dt, volume, group))
             return addcc(t, fq, l, volume)
 
         def addc(t, ch, l=1):
             for cc, i in enumerate(sorted(ch)):
                 ovh = l * 0.05 * cc
-                addcc(t + ovh, i, l - ovh, volume=2.0 / len(ch))
+                add(t + ovh, i, l - ovh, volume=2.0 / len(ch))
             return t + l
 
         def mx(fq, oct):
@@ -1709,11 +1710,27 @@ class SynthesizerProject:
         return
 
     def compile(self):
-        print(f'{self.x.freq.len} notes...\n')
-        self.x.compile()
-        #self.x.sound.play(1)
-        print('result length = ', self.x.raw.shape[0] / self.x.mixer.frequency, 's')
+        # generate kernel code
+        with open("source/kernel_template.cl") as file:
+            code = file.read()
+        # create kernel:
+        function_code = ""
+        switch_code = ""
+        # generate code
+        switch_code += ""
+        for id, t in enumerate(self.configs.kernel.tools):
+            switch_code += f"case {id}: res += {t.name}(s, notes + n, rnd); break;"
+            function_code += f"float {t.name}(float s, struct note *note, float rnd){{ {t.code} }}"
+        # insert before kernel all
+        code = code.replace("<TOOLS_FUNCTION>", function_code)
+        code = code.replace("<TOOLS_SWITCH>", switch_code)
+        with open("source/kernel.cl", "w") as file:
+            file.write(code)
+        print(code)
+        print(f'{len(self.tacts)} notes...\n')
+        raw = self.x.compile()
         print('ok')
+        return raw
 
     def resize(self):
         self.h, self.w = sc.getmaxyx()
@@ -1724,6 +1741,7 @@ class SynthesizerProject:
     def run(self):
 
         self.d = jsd(
+            mode="view",
             draw_time=0.0,
             time_start=0,
             visual=jsd(
@@ -1736,11 +1754,31 @@ class SynthesizerProject:
             ),
             max_groups=2
         )
-        self.tones = []
-
-        self.create('r',dt=0.25*1.5)
+        self.configs = jsd(
+            kernel=jsd(
+                tools=[]
+            ),
+        )
+        self.configs.kernel.tools.append(SynthesizerTool(name="Piano", code="""
+            float dr;
+            if (note->frequency > 0)
+            {
+                //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
+                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+            }
+            else
+            {
+                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                return v * rnd;
+            }"""))
+        self.tacts = []
+        self.create(choice('rtm'),dt=0.25*1.5)
         t = -time.time()
-        raw = self.x.compile()
+        raw = self.compile()
         t += time.time()
         print(f"Used Time: {t}s.")
         raw = np.tanh(raw)

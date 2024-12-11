@@ -59,6 +59,7 @@
 		</Unit>
 		<Unit filename="source/gpgpu.h" />
 		<Unit filename="source/kernel.cl" />
+		<Unit filename="source/kernel_template.cl" />
 		<Unit filename="source/main.c">
 			<Option compilerVar="CC" />
 		</Unit>

@@ -15,22 +15,7 @@ float random(float time) {
     return fract(sin(time * 78.233) * 43758.5453123, &_);
 }
 
-float Piano(float s, struct note *note, float rnd){ 
-            float dr;
-            if (note->frequency > 0)
-            {
-                //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
-            }
-            else
-            {
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                return v * rnd;
-            } }
+<TOOLS_FUNCTION>
 
 kernel void generation_kernel( __global float *dest,
                                uint dst_len,
@@ -58,7 +43,7 @@ kernel void generation_kernel( __global float *dest,
             int x = 0;
             switch (x) // notes[n].tool
             {
-            case 0: res += Piano(s, notes + n, rnd); break;
+            <TOOLS_SWITCH>
             default:
                 break;
             }
