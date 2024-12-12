@@ -6,15 +6,9 @@
 #define NOTE_SIZE 32
 
 
-struct tool
-{
-    char *kernel_code;
-    char *kernel_name; // created in initialisation
-};
-
-
 struct __attribute__ ((packed)) note
 {
+    int tool;
     int start;
     int end;
     float freq;
@@ -48,9 +42,11 @@ struct track
 
 int climp_connect();
 
-int climp_track_load(struct track *t, float *dst, int dst_len, float *times, float *lengths, float *freqs, float *volumes, int notes_len);
+int climp_track_load(struct track *t, float *dst, int dst_len, int *tools, float *times, float *lengths, float *freqs, float *volumes, int notes_len);
 
 int climp_track_process(struct track *t);
+
+int climp_track_destroy(struct track *t);
 
 
 #endif // CLIMPAPI_H_INCLUDED

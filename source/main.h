@@ -23,6 +23,7 @@ void DLL_EXPORT kernel(
     float *dst,
     int dst_len,
     // notes
+    int *tools,
     float *times,
     float *lengths,
     float *freqs,

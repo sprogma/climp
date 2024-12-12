@@ -1360,11 +1360,14 @@ for function_import in music_class.FUNCTIONS:
 
 
 if __name__ == "__main__":
-
-    climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+    path = __file__
+    path = path[:max(path.rfind('/'), path.rfind('\\'))]
+    path = path[:max(path.rfind('/'), path.rfind('\\'))]
+    climplib = ctypes.cdll.LoadLibrary(fr"{path}\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
     climplib.kernel.argtypes = [
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
         ctypes.c_size_t,
+        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # notes
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes

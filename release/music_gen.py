@@ -44,7 +44,8 @@ class jsd(dict):
         return self
 
 class GeneratorTone:
-    def __init__(self, time, length, volume, frequency):
+    def __init__(self, tool, time, length, volume, frequency):
+        self.tool = tool
         self.time = time
         self.length = length
         self.volume = volume
@@ -68,6 +69,7 @@ class Generator:
         result = np.zeros(result_length, dtype="float32")
 
         input_len = len(self.inputs)
+        input_tools = np.zeros(input_len, dtype="int32")
         input_times = np.zeros(input_len, dtype="float32")
         input_lengths = np.zeros(input_len, dtype="float32")
         input_frequencies = np.zeros(input_len, dtype="float32")
@@ -75,21 +77,22 @@ class Generator:
 
         # set
         for n, i in enumerate(self.inputs):
+            input_tools[n] = self.inputs[n].tool
             input_times[n] = self.inputs[n].time
             input_lengths[n] = self.inputs[n].length
             input_frequencies[n] = self.inputs[n].frequency
             input_volumes[n] = self.inputs[n].volume
 
         # call
-        self.api_function(result, result_length, input_times, input_lengths, input_frequencies, input_volumes, input_len)
+        self.api_function(result, result_length, input_tools, input_times, input_lengths, input_frequencies, input_volumes, input_len)
 
         # return
         return result
 
 
 class SynthesizerProjectTone:
-    def __init__(self, instrument, frequency, time, length, volume, group):
-        self.instrument = instrument
+    def __init__(self, tool, frequency, time, length, volume, group):
+        self.tool = tool
         self.frequency = frequency
         self.time = time
         self.length = length
@@ -120,8 +123,7 @@ class SynthesizerTool:
 class SynthesizerProject:
     def __init__(self, api_function):
         self.x = Generator(api_function)
-        self.rw, self.lw = 0, 0
-        self.w, self.h = 0, 0
+        self.w, self.ht, self.hl, self.log_w = 0, 0, 0, 0
         self.d = jsd()
         self.configs = jsd()
         self.tacts: [SynthesizerProjectTact] = []
@@ -129,8 +131,21 @@ class SynthesizerProject:
     def draw(self):
         sc.clear()
         self.tacts.sort(key=lambda x: x.time or -1)
-        self.d.draw_time = (pygame.time.get_ticks() - self.d.time_start) / 1000.0
+        if self.d.music.playing:
+            self.d.music.draw_time = (pygame.time.get_ticks() - self.d.music.time_start) / 1000.0
+        else:
+            self.d.music.draw_time = math.inf
         self.draw_tacts()
+
+    def log(self, s, color):
+        s = [s]
+        while len(s[-1]) > self.log_w:
+            s.append(s[-1][self.log_w:])
+            s[-2] = s[-2][:self.log_w]
+        for line in s:
+            self.d.log.append((line, color))
+        while len(self.d.log) > self.hl - 1:
+            self.d.log.pop(0)
 
     def draw_tacts(self):
         line_height = 1+self.d.max_groups*2
@@ -141,20 +156,21 @@ class SynthesizerProject:
         for i in self.tacts:
             nx, ny = (x + i.length * line_width) % self.w, y + (x + i.length * line_width) // self.w * line_height
             # if visible
-            if y <= -line_height <= ny or y <= self.h+line_height <= ny or -line_height <= y <= self.h+line_height:
+            if y <= -line_height <= ny or y <= self.ht+line_height <= ny or -line_height <= y <= self.ht+line_height:
                 cnt = defaultdict(int)
                 # draw notes
                 for note in i.notes:
                     cnt[note.group] += 1
                     px, py = (x + cnt[note.group] * line_width) % self.w, y + (x + cnt[note.group] * line_width) // self.w * line_height
-                    is_playing = self.d.draw_time > note.time and (self.d.draw_time - note.time) < note.length
+                    is_playing = self.d.music.draw_time > note.time and (self.d.music.draw_time - note.time) < note.length
                     dy = note.group * 2 + 1
-                    addstr(py+dy, px, '|' + str(int(note.frequency)), 2 if is_playing else 0)
+                    if py + dy < self.ht:
+                        addstr(py+dy, px, '|' + str(int(note.frequency)), 2 if is_playing else 0)
                 # /draw notes
             # [get playing...]
             for cnt, note in enumerate(i.notes, 1):
                 px, py = (x + cnt * line_width) % self.w, y + (x + cnt * line_width) // self.w * line_height
-                if self.d.draw_time > note.time and (self.d.draw_time - note.time) < note.length:
+                if self.d.music.draw_time > note.time and (self.d.music.draw_time - note.time) < note.length:
                     mus_y = min(mus_y, py+self.d.visual.cy)
             # move to next note
             x, y = nx, ny
@@ -162,108 +178,55 @@ class SynthesizerProject:
                 y += line_height
                 x = 0
         if self.d.visual.follow_music and mus_y != math.inf:
-            if self.d.visual.cy < mus_y - self.h * 2 // 3:
-                self.d.visual.cy = mus_y - self.h // 3
+            if self.d.visual.cy < mus_y - self.ht * 2 // 3:
+                self.d.visual.cy = mus_y - self.ht // 3
+
+        # draw line
+        sc.hline(self.ht, 0, '-', self.w)
+        # draw low log panel
+        for pos, _ in enumerate(self.d.log, 1):
+            line, color = _
+            addstr(self.ht + pos, 1, line[:self.log_w], color)
+        # draw low info panel
+        sc.vline(self.ht+1, self.log_w, '|', self.hl-1)
+        addstr(self.ht+1, self.log_w + 2, 'mode:'+self.d.mode, c.base)
+
 
     def events(self):
         key = 0
-        while key != -1:
+        while True:
             key = sc.getch()
             if key == -1:
-                break
-            if key == curses.KEY_RESIZE:
+                return True
+            elif key == curses.KEY_RESIZE:
                 curses.resize_term(*sc.getmaxyx())
                 sc.clear()
                 sc.refresh()
-            if key == curses.KEY_UP:
-                self.d.visual.cy -= 1
-            if key == curses.KEY_DOWN:
-                self.d.visual.cy += 1
+            elif key == 27:
+                return False
+            elif self.d.mode == 'view':
+                self.events_view(key)
+
+    def events_view(self, key):
+        if key == curses.KEY_UP:
+            self.d.visual.cy -= 1
+        if key == curses.KEY_DOWN:
+            self.d.visual.cy += 1
+        if key in (ord('c'), ord('C')):
+            self.compile()
 
     def create(self, what, dt=0.25, X=False):
         lm = 1
         fqcorr = 0.5
 
-        MODE_LINEAR = 0
-        MODE_NOISE = 1
-
-        sndvlm = [
-            [4.0, 0.3],
-            [3.0, 0.05],
-            [2.0, 0.5],
-            [1.0, 1.0],
-            [0.5, 1.0],
-            #[0.25, 1.0],
-            #[0.125, 3.0]
-        ]
-        v = 0.5
-        sss = sum(map(lambda x: x[1], sndvlm))
-        sndvlm = list(map(lambda x: (x[0], v * x[1] / sss), sndvlm))
-        print(sndvlm)
-
-        z = [0]*100
-        for i in sndvlm:
-            z[int(math.log(i[0]+0.01, 2.0)*4.0 + 50)] += i[1] * 100000
-        for p, i in enumerate(z):
-            f = pow(2.0, (p-50)/4)
-            print(f'{f:20.10f}', '#' * int(math.log(i + 0.1, 2.0)))
-
-        if X:
-            sndvlm = [
-                0.1,
-                0.03,
-                0.003,
-                0.07,
-                0.004,
-                0.02,
-                0.027,
-                0.013,
-                0.008,
-                0.0079,
-                0.0076,
-                0.0075,
-                0.0005,
-                0.004
-            ]
-
         def tact(time=None):
             self.tacts.append(SynthesizerProjectTact(time))
-
-        def addcc(t, fq, l=1.0, volume=1.0):
-            EPS = 0.001
-            ar = [0.5 * i for i in range(16)]
-            ar2 = [1.0 * i for i in range(16)]
-            if self.tacts[-1].time is not None:
-                nt = self.tacts[-1].time
-                if any(map(lambda x: abs(x - (t - nt)) < EPS, ar)):
-                    if any(map(lambda x: abs(x - (t - nt)) < EPS, ar2)):
-                        ...
-                    else:
-                        volume *= 0.9
-                else:
-                    volume *= 0.8
-            if X:
-                for i in range(len(sndvlm)):
-                    f = fq * (i + 1) * fqcorr
-                    v = sndvlm[i]*volume
-                    self.x.add(GeneratorTone(t * dt, dt*l*lm, v * 0.4 / 2.0 ** i, f))
-                for i in range(3):
-                    f = fq / 2 ** i
-                    v = 0.3*volume
-                    self.x.add(GeneratorTone(t * dt, dt*l*lm, v * 0.4 / 2.0 ** i, f))
-                return t + l
-            for ffq, v in sndvlm:
-                f = fq * ffq
-                v *= volume
-                #self.x.add_note([t * dt, f, v, t * dt + dt * l * lm, f, 0], 1, MODE_LINEAR)
-                self.x.add(GeneratorTone(t*dt, dt*l*lm,v,f))
-            return t + l
 
         def add(t, fq, l=1.0, volume=1.0, group=0):
             if what == 'm' and fq <= 300:
                 group = 1
             self.tacts[-1].notes.append(SynthesizerProjectTone(0, fq, t*dt, l*dt, volume, group))
-            return addcc(t, fq, l, volume)
+            return t + l
 
         def addc(t, ch, l=1):
             for cc, i in enumerate(sorted(ch)):
@@ -275,13 +238,9 @@ class SynthesizerProject:
             return fq * pow(2.0, oct + 1)
 
         def bt(t, l=1):
-            #for i in range(42):
-            #    f = 5550 + i * 116.1251261261261
-            #self.x.add_note([t * dt, 0.0, 1.0, t * dt + dt * l * lm * 0.5, 0.0, 0], 1, MODE_NOISE)
-            #self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,5.0,112525951259179.12512951251))
             v = 1.0
-            self.tacts[-1].notes.append(SynthesizerProjectTone(0, -1.0, t*dt, dt*l*lm*0.5, v, 1))
-            self.x.add(GeneratorTone(t*dt, dt*l*lm*0.5,v,-1.0))
+            self.tacts[-1].notes.append(SynthesizerProjectTone(1, -1.0, t*dt, dt*l*0.5, v, 1))
+            self.x.add(GeneratorTone(1, t*dt, dt*l*lm*0.5,v,-1.0))
             return t + l
 
         # notes
@@ -1710,6 +1669,14 @@ class SynthesizerProject:
         return
 
     def compile(self):
+        used_time = -time.time()
+        self.log("compilation start...", c.log.info)
+        # generate tones
+        self.x.inputs.clear()
+        for i in self.tacts:
+            for note in i.notes:
+                self.x.add(GeneratorTone(0, note.time, note.length * self.configs.legato_mod, note.volume, note.frequency))
+
         # generate kernel code
         with open("source/kernel_template.cl") as file:
             code = file.read()
@@ -1726,24 +1693,27 @@ class SynthesizerProject:
         code = code.replace("<TOOLS_SWITCH>", switch_code)
         with open("source/kernel.cl", "w") as file:
             file.write(code)
-        print(code)
-        print(f'{len(self.tacts)} notes...\n')
         raw = self.x.compile()
-        print('ok')
-        return raw
+        used_time += time.time()
+        self.log(f"compiled. Used time: {used_time:.3f} s, {raw.shape[0]/1e6:.1f}M samples.", c.log.info)
+        return None
 
     def resize(self):
         self.h, self.w = sc.getmaxyx()
-
-        self.lw = max(20, self.w // 5)
-        self.rw = self.w - self.lw
+        self.log_w = self.w // 2
+        self.hl = min(15, max(7, self.w // 5))
+        self.ht = self.h - self.hl
 
     def run(self):
 
         self.d = jsd(
             mode="view",
-            draw_time=0.0,
-            time_start=0,
+            log = [],
+            music=jsd(
+                draw_time=0.0,
+                playing=False,
+                time_start=0,
+            ),
             visual=jsd(
                 cy=0,
                 follow_music=True,
@@ -1758,41 +1728,44 @@ class SynthesizerProject:
             kernel=jsd(
                 tools=[]
             ),
+            legato_mod=2.0
         )
         self.configs.kernel.tools.append(SynthesizerTool(name="Piano", code="""
             float dr;
-            if (note->frequency > 0)
-            {
-                //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
-            }
-            else
-            {
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                return v * rnd;
-            }"""))
+            //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
+            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);"""))
+        self.configs.kernel.tools.append(SynthesizerTool(name="Dram", code="""
+            float dr;
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            return v * rnd;"""))
         self.tacts = []
-        self.create(choice('rtm'),dt=0.25*1.5)
-        t = -time.time()
-        raw = self.compile()
-        t += time.time()
-        print(f"Used Time: {t}s.")
-        raw = np.tanh(raw)
-        raw *= 32767.0
-        raw = raw.astype(dtype=np.int16)
-        raw = np.column_stack((raw, raw))
-        # export sound
-        raw = raw.copy(order='C')
-        pygame.init()
-        sound = pygame.sndarray.make_sound(raw)
-        sound.play()
-        self.d.time_start = pygame.time.get_ticks()
+        self.resize()
+
+        # INIT?
+
+        tt = choice('rtm')
+        self.create(tt,dt=0.25*1.5)
+        self.log("created music: " + tt, c.log.info)
+        self.configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
+        if False:
+            raw = self.compile()
+            raw = np.tanh(raw)
+            raw *= 32767.0
+            raw = raw.astype(dtype=np.int16)
+            raw = np.column_stack((raw, raw))
+            # export sound
+            raw = raw.copy(order='C')
+            pygame.init()
+            sound = pygame.sndarray.make_sound(raw)
+            sound.play()
+            self.d.music.time_start = pygame.time.get_ticks()
 
         while True:
             self.resize()
             self.draw()
-            self.events()
+            if not self.events():
+                return

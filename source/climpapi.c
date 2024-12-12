@@ -42,7 +42,7 @@ int climp_connect()
 
 
 
-int climp_track_load(struct track *t, float *dst, int dst_len, float *times, float *lengths, float *freqs, float *volumes, int notes_len)
+int climp_track_load(struct track *t, float *dst, int dst_len, int *tools, float *times, float *lengths, float *freqs, float *volumes, int notes_len)
 {
     // fill structure
     t->dest = dst;
@@ -60,6 +60,7 @@ int climp_track_load(struct track *t, float *dst, int dst_len, float *times, flo
     // load notes
     for (int id = 0; id < notes_len; ++id)
     {
+        t->notes[id].tool  = tools[id];
         t->notes[id].start  = (int)(t->freqf * times[id]);
         t->notes[id].end    = (int)(t->freqf * (times[id] + lengths[id]));
         t->notes[id].freq   = freqs[id];
@@ -172,35 +173,22 @@ int climp_track_process(struct track *t)
 
     memcpy(t->dest, ptr, sizeof(*t->dest) * t->samples);
 
+    clEnqueueUnmapMemObject(SL_queues[UsedPlatform][UsedDevice],
+                            dest,
+                            ptr,
+                            0, NULL, NULL);
+    clReleaseMemObject(dest);
+    clReleaseMemObject(notes);
+    clReleaseMemObject(opt);
 
     return 0;
 }
 
 
-
-int climp_track_process_C(struct track *t)
+int climp_track_destroy(struct track *t)
 {
-    for (int s = 0; s < t->samples; ++s)
-    {
-        if (s % 44100 == 0)
-        {
-            printf("%d/%d sec.\n", s / 44100, t->samples / 44100);fflush(stdout);
-        }
-        t->dest[s] = 0.0;
-        // iterate from notes
-        int beat = s / t->opt_beat_samples;
-        int note = 0;
-        while (t->opt[beat][note] != -1)
-        {
-            int n = t->opt[beat][note];
-            if (t->notes[n].start <= s && s <= t->notes[n].end)
-            {
-                t->dest[s] += t->notes[n].volume * sin(s * t->notes[n].freq / t->freqf * 2.0 * M_PI);
-            }
-            note++;
-        }
-    }
-
+    free(t->notes);
+    free(t->opt);
     return 0;
 }
 

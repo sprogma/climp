@@ -3,6 +3,7 @@
 
 struct __attribute__ ((packed)) note
 {
+    int tool;
     int start;
     int end;
     float frequency;
@@ -17,20 +18,15 @@ float random(float time) {
 
 float Piano(float s, struct note *note, float rnd){ 
             float dr;
-            if (note->frequency > 0)
-            {
-                //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
-            }
-            else
-            {
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                return v * rnd;
-            } }
+            //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
+            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0); }float Dram(float s, struct note *note, float rnd){ 
+            float dr;
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            return v * rnd; }
 
 kernel void generation_kernel( __global float *dest,
                                uint dst_len,
@@ -55,10 +51,9 @@ kernel void generation_kernel( __global float *dest,
     {
         if (notes[n].start <= s && s <= notes[n].end)
         {
-            int x = 0;
-            switch (x) // notes[n].tool
+            switch (notes[n].tool)
             {
-            case 0: res += Piano(s, notes + n, rnd); break;
+            case 0: res += Piano(s, notes + n, rnd); break;case 1: res += Dram(s, notes + n, rnd); break;
             default:
                 break;
             }

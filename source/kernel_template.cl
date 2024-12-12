@@ -3,6 +3,7 @@
 
 struct __attribute__ ((packed)) note
 {
+    int tool;
     int start;
     int end;
     float frequency;
@@ -40,8 +41,7 @@ kernel void generation_kernel( __global float *dest,
     {
         if (notes[n].start <= s && s <= notes[n].end)
         {
-            int x = 0;
-            switch (x) // notes[n].tool
+            switch (notes[n].tool)
             {
             <TOOLS_SWITCH>
             default:

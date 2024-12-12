@@ -18,6 +18,7 @@ void DLL_EXPORT kernel(
     float *dst,
     int dst_len,
     // notes
+    int *tools,
     float *times,
     float *lengths,
     float *freqs,
@@ -31,15 +32,19 @@ void DLL_EXPORT kernel(
 
     // init connection
     err = climp_connect();
-    if (err) { fprintf(stderr, "Error in connection. Failed to load DLL."); return;}
+    if (err)
+    {
+        fprintf(stderr, "Error in connection. Failed to connect device.");
+        exit(1);
+    }
 
 
     // load track
-    err = climp_track_load(&t, dst, dst_len, times, lengths, freqs, volumes, notes_len);
+    err = climp_track_load(&t, dst, dst_len, tools, times, lengths, freqs, volumes, notes_len);
     if (err)
     {
         fprintf(stderr, "error at loading.\n");
-        return;
+        exit(1);
     }
 
     // process
@@ -47,7 +52,14 @@ void DLL_EXPORT kernel(
     if (err)
     {
         fprintf(stderr, "error at processing.\n");
-        return;
+        exit(1);
+    }
+
+    err = climp_track_destroy(&t);
+    if (err)
+    {
+        fprintf(stderr, "error at deallocating memory.\n");
+        exit(1);
     }
 
     return;

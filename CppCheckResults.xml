@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<results version="2">
+    <cppcheck version="2.15.0" />
+    <errors>
+        <error id="missingIncludeSystem" severity="information" msg="Include file: &lt;windows.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results." verbose="Include file: &lt;windows.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results.">
+            <location file="source\main.h" line="4" column="0" />
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;note::tool&apos; is never used." verbose="struct member &apos;note::tool&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="11" column="9" />
+            <symbol>note::tool</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;note::start&apos; is never used." verbose="struct member &apos;note::start&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="12" column="9" />
+            <symbol>note::start</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;note::end&apos; is never used." verbose="struct member &apos;note::end&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="13" column="9" />
+            <symbol>note::end</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;note::freq&apos; is never used." verbose="struct member &apos;note::freq&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="14" column="11" />
+            <symbol>note::freq</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;note::volume&apos; is never used." verbose="struct member &apos;note::volume&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="15" column="11" />
+            <symbol>note::volume</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::freq&apos; is never used." verbose="struct member &apos;track::freq&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="22" column="9" />
+            <symbol>track::freq</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::freqf&apos; is never used." verbose="struct member &apos;track::freqf&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="23" column="11" />
+            <symbol>track::freqf</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::samples&apos; is never used." verbose="struct member &apos;track::samples&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="24" column="9" />
+            <symbol>track::samples</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::samplesf&apos; is never used." verbose="struct member &apos;track::samplesf&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="25" column="11" />
+            <symbol>track::samplesf</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::notes&apos; is never used." verbose="struct member &apos;track::notes&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="27" column="18" />
+            <symbol>track::notes</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::notes_len&apos; is never used." verbose="struct member &apos;track::notes_len&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="28" column="9" />
+            <symbol>track::notes_len</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::dest&apos; is never used." verbose="struct member &apos;track::dest&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="30" column="12" />
+            <symbol>track::dest</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::opt&apos; is never used." verbose="struct member &apos;track::opt&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="33" column="11" />
+            <symbol>track::opt</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::opt_beat_samples&apos; is never used." verbose="struct member &apos;track::opt_beat_samples&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="34" column="9" />
+            <symbol>track::opt_beat_samples</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;track::opt_len&apos; is never used." verbose="struct member &apos;track::opt_len&apos; is never used." cwe="563" file0="source/climpapi.h">
+            <location file="source\climpapi.h" line="35" column="9" />
+            <symbol>track::opt_len</symbol>
+        </error>
+        <error id="missingIncludeSystem" severity="information" msg="Include file: &lt;stdint.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results." verbose="Include file: &lt;stdint.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results.">
+            <location file="..\..\OCL\include\CL\cl_platform.h" line="253" column="0" />
+        </error>
+        <error id="missingIncludeSystem" severity="information" msg="Include file: &lt;stddef.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results." verbose="Include file: &lt;stddef.h&gt; not found. Please note: Cppcheck does not need standard library headers to get proper results.">
+            <location file="..\..\OCL\include\CL\cl_platform.h" line="362" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;string.h&quot; not found.' verbose='Include file: &quot;string.h&quot; not found.'>
+            <location file="source\main.c" line="1" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;inttypes.h&quot; not found.' verbose='Include file: &quot;inttypes.h&quot; not found.'>
+            <location file="source\main.c" line="2" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdio.h&quot; not found.' verbose='Include file: &quot;stdio.h&quot; not found.'>
+            <location file="source\main.c" line="3" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdlib.h&quot; not found.' verbose='Include file: &quot;stdlib.h&quot; not found.'>
+            <location file="source\main.c" line="4" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdalign.h&quot; not found.' verbose='Include file: &quot;stdalign.h&quot; not found.'>
+            <location file="source\main.c" line="5" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdarg.h&quot; not found.' verbose='Include file: &quot;stdarg.h&quot; not found.'>
+            <location file="source\main.c" line="6" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;math.h&quot; not found.' verbose='Include file: &quot;math.h&quot; not found.'>
+            <location file="source\main.c" line="7" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;string.h&quot; not found.' verbose='Include file: &quot;string.h&quot; not found.'>
+            <location file="source\climpapi.c" line="1" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;inttypes.h&quot; not found.' verbose='Include file: &quot;inttypes.h&quot; not found.'>
+            <location file="source\climpapi.c" line="2" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdio.h&quot; not found.' verbose='Include file: &quot;stdio.h&quot; not found.'>
+            <location file="source\climpapi.c" line="3" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdlib.h&quot; not found.' verbose='Include file: &quot;stdlib.h&quot; not found.'>
+            <location file="source\climpapi.c" line="4" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdalign.h&quot; not found.' verbose='Include file: &quot;stdalign.h&quot; not found.'>
+            <location file="source\climpapi.c" line="5" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdarg.h&quot; not found.' verbose='Include file: &quot;stdarg.h&quot; not found.'>
+            <location file="source\climpapi.c" line="6" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;math.h&quot; not found.' verbose='Include file: &quot;math.h&quot; not found.'>
+            <location file="source\climpapi.c" line="7" column="0" />
+        </error>
+        <error id="missingInclude" severity="information" msg='Include file: &quot;stdio.h&quot; not found.' verbose='Include file: &quot;stdio.h&quot; not found.'>
+            <location file="source\gpgpu.c" line="1" column="0" />
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;shape_t::dim&apos; is never used." verbose="struct member &apos;shape_t::dim&apos; is never used." cwe="563" file0="source/gpgpu.h">
+            <location file="source\gpgpu.h" line="20" column="13" />
+            <symbol>shape_t::dim</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;shape_t::global_offset&apos; is never used." verbose="struct member &apos;shape_t::global_offset&apos; is never used." cwe="563" file0="source/gpgpu.h">
+            <location file="source\gpgpu.h" line="21" column="12" />
+            <symbol>shape_t::global_offset</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;shape_t::global_size&apos; is never used." verbose="struct member &apos;shape_t::global_size&apos; is never used." cwe="563" file0="source/gpgpu.h">
+            <location file="source\gpgpu.h" line="22" column="12" />
+            <symbol>shape_t::global_size</symbol>
+        </error>
+        <error id="unusedStructMember" severity="style" msg="struct member &apos;shape_t::local_size&apos; is never used." verbose="struct member &apos;shape_t::local_size&apos; is never used." cwe="563" file0="source/gpgpu.h">
+            <location file="source\gpgpu.h" line="23" column="12" />
+            <symbol>shape_t::local_size</symbol>
+        </error>
+        <error id="redundantAssignment" severity="style" msg="Variable &apos;err&apos; is reassigned a value before the old one has been used." verbose="Variable &apos;err&apos; is reassigned a value before the old one has been used." cwe="563" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="158" column="9" info="err is overwritten" />
+            <location file="source\climpapi.c" line="128" column="9" info="err is assigned" />
+            <symbol>err</symbol>
+        </error>
+        <error id="constParameterPointer" severity="style" msg="Parameter &apos;tools&apos; can be declared as pointer to const" verbose="Parameter &apos;tools&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="45" column="69" info="Parameter &apos;tools&apos; can be declared as pointer to const" />
+            <symbol>tools</symbol>
+        </error>
+        <error id="constParameterPointer" severity="style" msg="Parameter &apos;times&apos; can be declared as pointer to const" verbose="Parameter &apos;times&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="45" column="83" info="Parameter &apos;times&apos; can be declared as pointer to const" />
+            <symbol>times</symbol>
+        </error>
+        <error id="constParameterPointer" severity="style" msg="Parameter &apos;lengths&apos; can be declared as pointer to const" verbose="Parameter &apos;lengths&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="45" column="97" info="Parameter &apos;lengths&apos; can be declared as pointer to const" />
+            <symbol>lengths</symbol>
+        </error>
+        <error id="constParameterPointer" severity="style" msg="Parameter &apos;freqs&apos; can be declared as pointer to const" verbose="Parameter &apos;freqs&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="45" column="113" info="Parameter &apos;freqs&apos; can be declared as pointer to const" />
+            <symbol>freqs</symbol>
+        </error>
+        <error id="constParameterPointer" severity="style" msg="Parameter &apos;volumes&apos; can be declared as pointer to const" verbose="Parameter &apos;volumes&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="45" column="127" info="Parameter &apos;volumes&apos; can be declared as pointer to const" />
+            <symbol>volumes</symbol>
+        </error>
+        <error id="constVariablePointer" severity="style" msg="Variable &apos;ptr&apos; can be declared as pointer to const" verbose="Variable &apos;ptr&apos; can be declared as pointer to const" cwe="398" file0="source/climpapi.c">
+            <location file="source\climpapi.c" line="163" column="15" info="Variable &apos;ptr&apos; can be declared as pointer to const" />
+            <symbol>ptr</symbol>
+        </error>
+        <error id="normalCheckLevelMaxBranches" severity="information" msg="Limiting analysis of branches. Use --check-level=exhaustive to analyze all branches." verbose="Limiting analysis of branches. Use --check-level=exhaustive to analyze all branches." file0="source/gpgpu.c">
+            <location file="source\gpgpu.c" line="0" column="0" />
+        </error>
+        <error id="variableScope" severity="style" msg="The scope of the variable &apos;err&apos; can be reduced." verbose="The scope of the variable &apos;err&apos; can be reduced. Warning: Be careful when fixing this message, especially when there are inner loops. Here is an example where cppcheck will write that the scope for &apos;i&apos; can be reduced:\012void f(int x)\012{\012    int i = 0;\012    if (x) {\012        // it&apos;s safe to move &apos;int i = 0;&apos; here\012        for (int n = 0; n &lt; 10; ++n) {\012            // it is possible but not safe to move &apos;int i = 0;&apos; here\012            do_something(&amp;i);\012        }\012    }\012}\012When you see this message it is always safe to reduce the variable scope 1 level." cwe="398" file0="source/gpgpu.c">
+            <location file="source\gpgpu.c" line="378" column="9" />
+            <symbol>err</symbol>
+        </error>
+        <error id="checkersReport" severity="information" msg="Active checkers: 111/835 (use --checkers-report=&lt;filename&gt; to see details)" verbose="Active checkers: 111/835 (use --checkers-report=&lt;filename&gt; to see details)" />
+    </errors>
+</results>
