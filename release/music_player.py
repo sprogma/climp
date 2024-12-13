@@ -1083,8 +1083,8 @@ c = jsd({
     'gen': jsd({
         'text': 39,
         'note': jsd({
-            'a': 40,
-            'b': 41,
+            'base': 40,
+            'playing': 41,
             'selected': 42,
         }),
         'timeline': 43,
@@ -1161,8 +1161,8 @@ def init_colors():
     curses.init_pair(c.info.timeline.empty.focus,   COLOR_LIGHT_GREY, COLOR_LIGHT_GREY)
     curses.init_pair(c.console.text, curses.COLOR_WHITE, curses.COLOR_BLACK)
     curses.init_pair(c.gen.text, curses.COLOR_WHITE, curses.COLOR_BLACK)
-    curses.init_pair(c.gen.note.a, curses.COLOR_BLACK, curses.COLOR_WHITE)
-    curses.init_pair(c.gen.note.b, curses.COLOR_BLACK, COLOR_LIGHT_GREY)
+    curses.init_pair(c.gen.note.base, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(c.gen.note.playing, curses.COLOR_BLACK, curses.COLOR_YELLOW)
     curses.init_pair(c.gen.note.selected, curses.COLOR_BLACK, curses.COLOR_CYAN)
     curses.init_pair(c.gen.timeline, curses.COLOR_BLACK, curses.COLOR_YELLOW)
 

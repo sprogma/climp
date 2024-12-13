@@ -1,3 +1,4 @@
+import string
 from collections import defaultdict
 import shlex
 import json
@@ -17,6 +18,8 @@ import curses
 from curses.textpad import Textbox, rectangle
 from threading import Thread, Lock
 import ctypes
+import tempfile
+import subprocess
 
 
 """
@@ -118,6 +121,11 @@ class SynthesizerTool:
     def __init__(self, name, code=""):
         self.name = name
         self.code = code
+        self.configs = jsd(
+            mute=False,
+            volume=1.0,
+            legato_mod=1.0,
+        )
 
 
 class SynthesizerProject:
@@ -152,8 +160,9 @@ class SynthesizerProject:
         line_width = 5
 
         mus_y = math.inf
+        sel_y = math.inf
         x, y = 0, -self.d.visual.cy
-        for i in self.tacts:
+        for tact_id, i in enumerate(self.tacts):
             nx, ny = (x + i.length * line_width) % self.w, y + (x + i.length * line_width) // self.w * line_height
             # if visible
             if y <= -line_height <= ny or y <= self.ht+line_height <= ny or -line_height <= y <= self.ht+line_height:
@@ -165,13 +174,19 @@ class SynthesizerProject:
                     is_playing = self.d.music.draw_time > note.time and (self.d.music.draw_time - note.time) < note.length
                     dy = note.group * 2 + 1
                     if py + dy < self.ht:
-                        addstr(py+dy, px, '|' + str(int(note.frequency)), 2 if is_playing else 0)
+                        color = c.gen.note.playing if is_playing else (c.gen.note.selected if tact_id == self.d.visual.selection.pos else c.gen.note.base)
+                        addstr(py+dy, px, '|' + str(int(note.frequency)), color)
                 # /draw notes
             # [get playing...]
+            min_y, max_y = math.inf, -math.inf
             for cnt, note in enumerate(i.notes, 1):
                 px, py = (x + cnt * line_width) % self.w, y + (x + cnt * line_width) // self.w * line_height
+                min_y = min(min_y, py+self.d.visual.cy)
+                max_y = max(max_y, py+self.d.visual.cy)
                 if self.d.music.draw_time > note.time and (self.d.music.draw_time - note.time) < note.length:
                     mus_y = min(mus_y, py+self.d.visual.cy)
+            if tact_id == self.d.visual.selection.pos:
+                sel_y = (min_y + max_y) // 2
             # move to next note
             x, y = nx, ny
             if self.w - x < self.w // 2:
@@ -180,6 +195,19 @@ class SynthesizerProject:
         if self.d.visual.follow_music and mus_y != math.inf:
             if self.d.visual.cy < mus_y - self.ht * 2 // 3:
                 self.d.visual.cy = mus_y - self.ht // 3
+            if self.d.visual.cy > mus_y - self.ht * 1 // 9:
+                self.d.visual.cy = mus_y - self.ht // 3
+
+        if self.d.mode == "view":
+            if not self.d.visual.follow_music:
+                if pygame.time.get_ticks() - self.d.visual.last_action_time > 5500:
+                    self.d.visual.follow_music = True
+                if self.d.visual.selection.recalculate_cy and self.d.visual.selection.pos is not None and sel_y != math.inf:
+                    self.d.visual.selection.recalculate_cy = False
+                    if self.d.visual.cy < sel_y - self.ht * 2 // 3:
+                        self.d.visual.cy = sel_y - self.ht // 3
+                    if self.d.visual.cy > sel_y - self.ht * 1 // 9:
+                        self.d.visual.cy = sel_y - self.ht // 3
 
         # draw line
         sc.hline(self.ht, 0, '-', self.w)
@@ -193,7 +221,6 @@ class SynthesizerProject:
 
 
     def events(self):
-        key = 0
         while True:
             key = sc.getch()
             if key == -1:
@@ -209,11 +236,203 @@ class SynthesizerProject:
 
     def events_view(self, key):
         if key == curses.KEY_UP:
+            self.d.visual.follow_music = False
+            self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.cy -= 1
         if key == curses.KEY_DOWN:
+            self.d.visual.follow_music = False
+            self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.cy += 1
+        if key == curses.KEY_RIGHT:
+            self.d.visual.follow_music = False
+            self.d.visual.last_action_time = pygame.time.get_ticks()
+            self.d.visual.selection.recalculate_cy = True
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            self.d.visual.selection.pos += 1
+            if self.d.visual.selection.pos >= len(self.tacts):
+                self.d.visual.selection.pos = len(self.tacts) - 1
+        if key == curses.KEY_LEFT:
+            self.d.visual.follow_music = False
+            self.d.visual.last_action_time = pygame.time.get_ticks()
+            self.d.visual.selection.recalculate_cy = True
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            self.d.visual.selection.pos -= 1
+            if self.d.visual.selection.pos < 0:
+                self.d.visual.selection.pos = 0
         if key in (ord('c'), ord('C')):
             self.compile()
+        if key in (ord('p'), ord('P')):
+            self.d.music.playing = not self.d.music.playing
+            if self.d.music.playing:
+                if self.d.music.track is None:
+                    self.log("Trak is not compiled yet [press 'c' to compile]", c.log.info)
+                    self.d.music.playing = False
+                else:
+                    self.d.music.time_start = pygame.time.get_ticks()
+                    self.d.music.track.play()
+            else:
+                self.d.music.track.stop()
+        if key in (ord('t'), ord('T')):
+            self.tool_panel()
+
+    def tool_panel(self):
+        # LONG FUNCTION :)
+        v = jsd(
+            selection=jsd(
+                tool=0,
+                column=1
+            )
+        )
+        def moditify_code(x):
+            file = tempfile.NamedTemporaryFile(mode='w+t', delete=False)
+            filename = file.name
+            file.write(f"float {x.name}(float s, struct note *note, float rnd)\n{{\n{x.code}\n}}")
+            file.close()
+            if os.name == "posix":
+                subprocess.run(['$EDITOR', filename], shell=True)
+            else:
+                err = subprocess.run("micro -version", shell=True).returncode
+                if err == 0: # found 'micro' (text editor) [only for my usage in windows]
+                    subprocess.run([f'powershell', '-c "', f'get-content -Raw -Path{filename} | ', 'micro', f">{filename} \""], shell=True)
+                else:
+                    subprocess.run([f'powershell', '-c', 'Notepad.exe', filename, " | Out-Null"], shell=True)
+            try:
+                with open(filename) as file:
+                    code = file.read()
+            except FileNotFoundError:
+                return None
+            print("!", code, ">")
+            exit(0)
+        def name_string(x):
+            if not x.strip():
+                raise Exception("Enter not empty string (left and right spaces will be cutted)")
+            return x.strip()
+        def in_float_01(x):
+            x = float(x)
+            if x < 0 or x > 1.0:
+                raise Exception("volume must be from 0.0 to 1.0")
+            return x
+        def in_float_positive(x):
+            x = float(x)
+            if x <= 0.0:
+                raise Exception("Legato mode must be more than 0")
+            return x
+        rows = {
+            "name": lambda x: x.name,
+            "code": lambda x: "<edit>",
+            "mute": lambda x: x.configs.mute,
+            "volume": lambda x: x.configs.volume,
+            "legato_mod": lambda x: x.configs.legato_mod,
+        }
+        rows_keys = list(rows.keys())
+        rows_edit = {
+            "name": lambda x: setattr(x, "name", s) if (s := get_input(name_string)) is not None else None,
+            "code": lambda x: moditify_code(x),
+            "mute": lambda x: setattr(x.configs, 'mute', not x.configs.mute),
+            "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01)) is not None else None,
+            "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive)) is not None else None,
+        }
+        def get_input(validate, required=False):
+            s = ""
+            waiting = True
+            sc.hline(self.h // 2 - 1, 0, '-', self.w)
+            if required:
+                addstr(self.h // 2 - 1, self.w // 2 - len("required") // 2, "required", c.path.unfocus)
+            sc.hline(self.h // 2, 0, ' ', self.w)
+            sc.hline(self.h // 2 + 1, 0, '-', self.w)
+            while waiting:
+                # draw state
+                sc.hline(self.h // 2, 0, ' ', self.w)
+                no_error = True
+                try:
+                    res = validate(s)
+                except Exception as e:
+                    no_error = False
+                    res = str(e)
+                res = f"{s} -> {res}"[:self.w]
+                addstr(self.h // 2, self.w // 2 - len(res) // 2, res, c.base)
+                sc.chgat(self.h // 2, self.w // 2 - len(res) // 2 + min(len(s), self.w) - 1, 1, curses.color_pair(c.path.unfocus))
+                sc.refresh()
+                # read key press
+                while True:
+                    key = sc.getch()
+                    if key == -1:
+                        break
+                    elif key == curses.KEY_RESIZE:
+                        curses.resize_term(*sc.getmaxyx())
+                        sc.clear()
+                        sc.refresh()
+                    elif key == 27:
+                        if not required:
+                            return None
+                    elif key == 8: # backspace
+                        s = s[:-1]
+                    elif key == 10: # confirm
+                        if no_error:
+                            waiting = False
+                            break
+                    elif chr(key) in string.printable:
+                        s += chr(key)
+            try:
+                return validate(s)
+            except Exception as e:
+                return None
+        def draw():
+            nonlocal v, rows
+            # draw tools table
+            sc.clear()
+            table = [list(rows.keys())]
+            for t in self.configs.kernel.tools:
+                table.append([])
+                for fn in rows.values():
+                    table[-1].append(str(fn(t)))
+            # draw table
+            width = list(map(lambda x: max(len(s[x]) for s in table), range(len(rows))))
+            width_sum = sum(width)
+            width = list(map(lambda x: (x * self.w) // width_sum, width))
+            for y, r in enumerate(table):
+                x = 0
+                for row in range(len(rows)):
+                    color = c.base
+                    if v.selection.tool == y - 1 and v.selection.column == row:
+                        color = c.path.unfocus
+                    w = width[row]
+                    s = f"{r[row]:{w-1}}|"[:w]
+                    addstr(y, x, s, color)
+                    x += width[row]
+                    addstr(y, x-1, "|", c.base)
+
+        while True:
+            self.resize()
+            draw()
+            while True:
+                key = sc.getch()
+                if key == -1:
+                    break
+                elif key == curses.KEY_RESIZE:
+                    curses.resize_term(*sc.getmaxyx())
+                    sc.clear()
+                    sc.refresh()
+                elif key == 27:
+                    return
+                elif key == 10:  # confirm
+                    rows_edit[rows_keys[v.selection.column]](self.configs.kernel.tools[v.selection.tool])
+                elif key == curses.KEY_LEFT:
+                    v.selection.column -= 1
+                    v.selection.column = max(v.selection.column, 0)
+                elif key == curses.KEY_RIGHT:
+                    v.selection.column += 1
+                    v.selection.column = min(v.selection.column, len(rows)-1)
+                elif key == curses.KEY_UP:
+                    v.selection.tool -= 1
+                    v.selection.tool = max(v.selection.tool, 0)
+                elif key == curses.KEY_DOWN:
+                    v.selection.tool += 1
+                    v.selection.tool = min(v.selection.tool, len(self.configs.kernel.tools)-1)
+                elif key in (ord('t'), ord('T')):
+                    return
 
     def create(self, what, dt=0.25, X=False):
         lm = 1
@@ -1669,14 +1888,24 @@ class SynthesizerProject:
         return
 
     def compile(self):
+        if self.d.music.track is not None:
+            self.d.music.playing = False
+            self.d.music.track.stop()
         used_time = -time.time()
         self.log("compilation start...", c.log.info)
+        self.draw()
+        sc.refresh()
         # generate tones
         self.x.inputs.clear()
         for i in self.tacts:
             for note in i.notes:
-                self.x.add(GeneratorTone(0, note.time, note.length * self.configs.legato_mod, note.volume, note.frequency))
-
+                if not self.configs.kernel.tools[note.tool].configs.mute:
+                    volume_pitch = self.configs.kernel.tools[note.tool].configs.volume
+                    legato_mod = self.configs.kernel.tools[note.tool].configs.legato_mod
+                    self.x.add(GeneratorTone(note.tool, note.time, note.length * legato_mod, note.volume * volume_pitch, note.frequency))
+        if not self.x.inputs:
+            self.log("Error: Empty notes (or all tools are muted.) Nothing to compile", c.log.error)
+            return
         # generate kernel code
         with open("source/kernel_template.cl") as file:
             code = file.read()
@@ -1686,17 +1915,26 @@ class SynthesizerProject:
         # generate code
         switch_code += ""
         for id, t in enumerate(self.configs.kernel.tools):
-            switch_code += f"case {id}: res += {t.name}(s, notes + n, rnd); break;"
-            function_code += f"float {t.name}(float s, struct note *note, float rnd){{ {t.code} }}"
+            switch_code += f"case {id}: res += {t.name}(s, notes + n, rnd); break;\n"
+            function_code += f"float {t.name}(float s, struct note *note, float rnd){{ {t.code} }}\n\n"
         # insert before kernel all
         code = code.replace("<TOOLS_FUNCTION>", function_code)
         code = code.replace("<TOOLS_SWITCH>", switch_code)
         with open("source/kernel.cl", "w") as file:
             file.write(code)
         raw = self.x.compile()
+        # export track
+        raw = np.tanh(raw)
+        raw *= 32767.0
+        raw = raw.astype(dtype=np.int16)
+        raw = np.column_stack((raw, raw))
+        # export sound
+        raw = raw.copy(order='C')
+        self.d.music.track = pygame.sndarray.make_sound(raw)
+        # log end
         used_time += time.time()
         self.log(f"compiled. Used time: {used_time:.3f} s, {raw.shape[0]/1e6:.1f}M samples.", c.log.info)
-        return None
+        return
 
     def resize(self):
         self.h, self.w = sc.getmaxyx()
@@ -1710,6 +1948,7 @@ class SynthesizerProject:
             mode="view",
             log = [],
             music=jsd(
+                track=None,
                 draw_time=0.0,
                 playing=False,
                 time_start=0,
@@ -1718,8 +1957,10 @@ class SynthesizerProject:
                 cy=0,
                 follow_music=True,
                 follow_music_time=0,
+                last_action_time=0.0,
                 selection=jsd(
                     pos=None,
+                    recalculate_cy=False,
                 )
             ),
             max_groups=2
@@ -1728,7 +1969,6 @@ class SynthesizerProject:
             kernel=jsd(
                 tools=[]
             ),
-            legato_mod=2.0
         )
         self.configs.kernel.tools.append(SynthesizerTool(name="Piano", code="""
             float dr;
@@ -1750,19 +1990,7 @@ class SynthesizerProject:
         tt = choice('rtm')
         self.create(tt,dt=0.25*1.5)
         self.log("created music: " + tt, c.log.info)
-        self.configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
-        if False:
-            raw = self.compile()
-            raw = np.tanh(raw)
-            raw *= 32767.0
-            raw = raw.astype(dtype=np.int16)
-            raw = np.column_stack((raw, raw))
-            # export sound
-            raw = raw.copy(order='C')
-            pygame.init()
-            sound = pygame.sndarray.make_sound(raw)
-            sound.play()
-            self.d.music.time_start = pygame.time.get_ticks()
+        self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
 
         while True:
             self.resize()
