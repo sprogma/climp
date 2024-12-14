@@ -123,6 +123,7 @@ class SynthesizerTool:
             mute=False,
             volume=1.0,
             legato_mod=1.0,
+            stereo=False,
         )
 
 
@@ -360,6 +361,7 @@ class SynthesizerProject:
             "mute": lambda x: x.configs.mute,
             "volume": lambda x: x.configs.volume,
             "legato_mod": lambda x: x.configs.legato_mod,
+            "use stereo": lambda x: x.configs.stereo,
         }
         rows_keys = list(rows.keys())
         rows_edit = {
@@ -368,6 +370,7 @@ class SynthesizerProject:
             "mute": lambda x: setattr(x.configs, 'mute', not x.configs.mute),
             "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01, info_string="Enter volume of tool")) is not None else None,
             "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive, info_string="Enter legato mod of tool")) is not None else None,
+            "use stereo": lambda x: setattr(x.configs, 'stereo', not x.configs.stereo),
         }
         def get_input(validate, required=False, info_string=""):
             s = ""
@@ -2021,13 +2024,28 @@ class SynthesizerProject:
             ),
         )
         self.configs.kernel.tools.append(SynthesizerTool(name="PianoSolo", code="""
-            float dr;
-            //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
-            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-            v *= fmax(0.01f, k);
-            dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
-        """.replace(" "*8,"")))
+                float freq[] = {
+                    1.0,
+                    0.5,
+                    0.2,
+                    0.05,
+                    0.1,
+                    0.0025,
+                    0.001
+                };
+                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                
+                float res = 0.0, dr;
+                for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                {
+                    float f = note->frequency * (fqid + 1);
+                    float fv = freq[fqid];
+                    dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                    res += fv*v*dr;
+                }
+                return res;
+        """.replace(" "*12,"")))
         self.configs.kernel.tools.append(SynthesizerTool(name="PianoBass", code="""
             float dr;
             //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
@@ -2051,6 +2069,7 @@ class SynthesizerProject:
         self.create(tt,dt=0.25*1.5)
         self.log("created music: " + tt, c.log.info)
         self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
+        self.configs.kernel.tools[1].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
 
         while True:
             self.resize()
