@@ -94,14 +94,12 @@ class Generator:
 
 
 class SynthesizerProjectTone:
-    def __init__(self, tool, frequency, time, length, volume, group):
+    def __init__(self, tool, frequency, time, length, volume):
         self.tool = tool
         self.frequency = frequency
         self.time = time
         self.length = length
         self.volume = volume
-        # meta
-        self.group = group
 
 
 class SynthesizerProjectTact:
@@ -113,7 +111,7 @@ class SynthesizerProjectTact:
     def length(self):
         cnt = defaultdict(int)
         for i in self.notes:
-            cnt[i.group] += 1
+            cnt[i.tool] += 1
         return max(cnt.values(), default=0) + 2 # 2 - fictive notes (in start and in the end)
 
 
@@ -156,7 +154,7 @@ class SynthesizerProject:
             self.d.log.pop(0)
 
     def draw_tacts(self):
-        line_height = 1+self.d.max_groups*2
+        line_height = 1+len(self.configs.kernel.tools)*2
         line_width = 5
 
         mus_y = math.inf
@@ -169,10 +167,10 @@ class SynthesizerProject:
                 cnt = defaultdict(int)
                 # draw notes
                 for note in i.notes:
-                    cnt[note.group] += 1
-                    px, py = (x + cnt[note.group] * line_width) % self.w, y + (x + cnt[note.group] * line_width) // self.w * line_height
+                    cnt[note.tool] += 1
+                    px, py = (x + cnt[note.tool] * line_width) % self.w, y + (x + cnt[note.tool] * line_width) // self.w * line_height
                     is_playing = self.d.music.draw_time > note.time and (self.d.music.draw_time - note.time) < note.length
-                    dy = note.group * 2 + 1
+                    dy = note.tool * 2 + 1
                     if py + dy < self.ht:
                         color = c.gen.note.playing if is_playing else (c.gen.note.selected if tact_id == self.d.visual.selection.pos else c.gen.note.base)
                         addstr(py+dy, px, '|' + str(int(note.frequency)), color)
@@ -286,16 +284,27 @@ class SynthesizerProject:
             )
         )
         def moditify_code(x):
-            file = tempfile.NamedTemporaryFile(mode='w+t', delete=False)
+            #file = tempfile.NamedTemporaryFile(mode='w+t', delete=False)
+            file = open("./tmp/tmp.c", "w")
             filename = file.name
-            file.write(f"float {x.name}(float s, struct note *note, float rnd)\n{{\n{x.code}\n}}")
+            note = """struct __attribute__ ((packed)) note
+            {
+                int tool;
+                int start;
+                int end;
+                float frequency;
+                float volume;
+            };""".replace("            ", "")
+            file.write(f"{note}\n\nfloat {x.name}(float s, struct note *note, float rnd)\n{{{x.code}}}")
             file.close()
             if os.name == "posix":
                 subprocess.run(['$EDITOR', filename], shell=True)
             else:
                 err = subprocess.run("micro -version", shell=True).returncode
                 if err == 0: # found 'micro' (text editor) [only for my usage in windows]
-                    subprocess.run([f'powershell', '-c "', f'get-content -Raw -Path{filename} | ', 'micro', f">{filename} \""], shell=True)
+                    curses.endwin()
+                    subprocess.run(['powershell', '-c',f'Start-Process micro {filename} -Wait -NoNewWindow'], shell=True)
+                    sc.refresh()
                 else:
                     subprocess.run([f'powershell', '-c', 'Notepad.exe', filename, " | Out-Null"], shell=True)
             try:
@@ -303,8 +312,34 @@ class SynthesizerProject:
                     code = file.read()
             except FileNotFoundError:
                 return None
-            print("!", code, ">")
-            exit(0)
+            # restore code?
+            fn_pos = code.find(x.name)
+            pos1 = code.find('{', fn_pos)
+            pos2 = code.rfind('}')
+            code = code[pos1+1:pos2]
+            x.code = code
+            os.remove(filename)
+        def new_tool():
+            base_of_code = """
+                float dr;
+                float v = note->volume;
+                float k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                dr = sin(s * note->frequency / 44100.0f * 3.1415926);
+                return v*dr;
+            """.replace("            ", "")
+            name = get_input(name_string, required=True, info_string="Enter name of tool")
+            code = f"\n    /*Enter code here to generate sample 's' from note 'note' (rnd is white noise from -1 to 1)*/{base_of_code}"
+            t = SynthesizerTool(name, code)
+            self.configs.kernel.tools.append(t)
+        def swap_tools(tid1, tid2):
+            self.configs.kernel.tools[tid1], self.configs.kernel.tools[tid2] = self.configs.kernel.tools[tid2], self.configs.kernel.tools[tid1]
+            for t in self.tacts:
+                for note in t.notes:
+                    if note.tool == tid2:
+                        note.tool = tid1
+                    elif note.tool == tid1:
+                        note.tool = tid2
         def name_string(x):
             if not x.strip():
                 raise Exception("Enter not empty string (left and right spaces will be cutted)")
@@ -328,18 +363,19 @@ class SynthesizerProject:
         }
         rows_keys = list(rows.keys())
         rows_edit = {
-            "name": lambda x: setattr(x, "name", s) if (s := get_input(name_string)) is not None else None,
+            "name": lambda x: setattr(x, "name", s) if (s := get_input(name_string, info_string="Enter name of tool")) is not None else None,
             "code": lambda x: moditify_code(x),
             "mute": lambda x: setattr(x.configs, 'mute', not x.configs.mute),
-            "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01)) is not None else None,
-            "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive)) is not None else None,
+            "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01, info_string="Enter volume of tool")) is not None else None,
+            "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive, info_string="Enter legato mod of tool")) is not None else None,
         }
-        def get_input(validate, required=False):
+        def get_input(validate, required=False, info_string=""):
             s = ""
             waiting = True
             sc.hline(self.h // 2 - 1, 0, '-', self.w)
             if required:
-                addstr(self.h // 2 - 1, self.w // 2 - len("required") // 2, "required", c.path.unfocus)
+                st = f"{info_string} [required]"
+                addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
             sc.hline(self.h // 2, 0, ' ', self.w)
             sc.hline(self.h // 2 + 1, 0, '-', self.w)
             while waiting:
@@ -403,6 +439,9 @@ class SynthesizerProject:
                     addstr(y, x, s, color)
                     x += width[row]
                     addstr(y, x-1, "|", c.base)
+            s = "-"*self.w
+            y = len(self.configs.kernel.tools)
+            addstr(y + 1, 0, s, (c.base if v.selection.tool != y else c.path.unfocus))
 
         while True:
             self.resize()
@@ -417,8 +456,13 @@ class SynthesizerProject:
                     sc.refresh()
                 elif key == 27:
                     return
+                elif key in (ord('t'), ord('T')):
+                    return
                 elif key == 10:  # confirm
-                    rows_edit[rows_keys[v.selection.column]](self.configs.kernel.tools[v.selection.tool])
+                    if v.selection.tool == len(self.configs.kernel.tools):
+                        new_tool()
+                    else:
+                        rows_edit[rows_keys[v.selection.column]](self.configs.kernel.tools[v.selection.tool])
                 elif key == curses.KEY_LEFT:
                     v.selection.column -= 1
                     v.selection.column = max(v.selection.column, 0)
@@ -430,9 +474,16 @@ class SynthesizerProject:
                     v.selection.tool = max(v.selection.tool, 0)
                 elif key == curses.KEY_DOWN:
                     v.selection.tool += 1
-                    v.selection.tool = min(v.selection.tool, len(self.configs.kernel.tools)-1)
-                elif key in (ord('t'), ord('T')):
-                    return
+                    # no -1 for 'new tool button'
+                    v.selection.tool = min(v.selection.tool, len(self.configs.kernel.tools))
+                elif key in (ord('w'), ord('W')):
+                    if v.selection.tool != 0 and v.selection.tool != len(self.configs.kernel.tools):
+                        swap_tools(v.selection.tool - 1, v.selection.tool)
+                        v.selection.tool -= 1
+                elif key in (ord('s'), ord('S')):
+                    if v.selection.tool < len(self.configs.kernel.tools) - 1:
+                        swap_tools(v.selection.tool, v.selection.tool + 1)
+                        v.selection.tool += 1
 
     def create(self, what, dt=0.25, X=False):
         lm = 1
@@ -444,7 +495,7 @@ class SynthesizerProject:
         def add(t, fq, l=1.0, volume=1.0, group=0):
             if what == 'm' and fq <= 300:
                 group = 1
-            self.tacts[-1].notes.append(SynthesizerProjectTone(0, fq, t*dt, l*dt, volume, group))
+            self.tacts[-1].notes.append(SynthesizerProjectTone(group, fq, t*dt, l*dt, volume))
             return t + l
 
         def addc(t, ch, l=1):
@@ -458,8 +509,8 @@ class SynthesizerProject:
 
         def bt(t, l=1):
             v = 1.0
-            self.tacts[-1].notes.append(SynthesizerProjectTone(1, -1.0, t*dt, dt*l*0.5, v, 1))
-            self.x.add(GeneratorTone(1, t*dt, dt*l*lm*0.5,v,-1.0))
+            self.tacts[-1].notes.append(SynthesizerProjectTone(2, -1.0, t*dt, dt*l*0.5, v))
+            self.x.add(GeneratorTone(2, t*dt, dt*l*lm*0.5,v,-1.0))
             return t + l
 
         # notes
@@ -1962,26 +2013,35 @@ class SynthesizerProject:
                     pos=None,
                     recalculate_cy=False,
                 )
-            ),
-            max_groups=2
+            )
         )
         self.configs = jsd(
             kernel=jsd(
                 tools=[]
             ),
         )
-        self.configs.kernel.tools.append(SynthesizerTool(name="Piano", code="""
+        self.configs.kernel.tools.append(SynthesizerTool(name="PianoSolo", code="""
             float dr;
             //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
             float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
             v *= fmax(0.01f, k);
             dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);"""))
+            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+        """.replace(" "*8,"")))
+        self.configs.kernel.tools.append(SynthesizerTool(name="PianoBass", code="""
+            float dr;
+            //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
+            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+        """.replace(" "*8,"")))
         self.configs.kernel.tools.append(SynthesizerTool(name="Dram", code="""
             float dr;
             float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
             v *= fmax(0.01f, k);
-            return v * rnd;"""))
+            return v * rnd;
+        """.replace(" "*8,"")))
         self.tacts = []
         self.resize()
 

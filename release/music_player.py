@@ -199,7 +199,7 @@ class Executor:
             wait_for = None
             if string.startswith('*!'):
                 try:
-                    sub = re.search('\d+', string)[0]
+                    sub = re.search(r'\d+', string)[0]
                 except Exception as e:
                     print(f"empty wait for statement. {e}")
                     return False

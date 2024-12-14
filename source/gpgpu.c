@@ -251,7 +251,7 @@ cl_kernel SL_compile_text(int platform_id, int device_id, const char *kernel_fun
                          0,
                          NULL, // SL_devices[platform_id] + device_id compile on all devices
                          // https://registry.khronos.org/OpenSL/specs/3.0-unified/html/OpenCL_API.html#compiler-options
-                         "-cl-single-precision-constant -cl-unsafe-math-optimizations",
+                         " -cl-std=CL2.0 -cl-single-precision-constant -cl-unsafe-math-optimizations",
                          NULL,  // using no function for errors detection
                          NULL); // and no it's data
 
