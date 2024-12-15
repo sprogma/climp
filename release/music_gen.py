@@ -126,6 +126,24 @@ class SynthesizerTool:
             stereo=False,
         )
 
+    def copy(self):
+        return self.from_string(self.to_string())
+
+    def to_string(self):
+        d = {
+            "name": self.name,
+            "code": self.code,
+            "configs": dict(self.configs)
+        }
+        return json.dumps(d)
+
+    @staticmethod
+    def from_string(s):
+        d = json.loads(s)
+        x = SynthesizerTool(d["name"], d["code"])
+        x.configs = jsd(d["configs"])
+        return x
+
 
 class SynthesizerProject:
     def __init__(self, api_function):
@@ -320,19 +338,43 @@ class SynthesizerProject:
             code = code[pos1+1:pos2]
             x.code = code
             os.remove(filename)
-        def new_tool():
-            base_of_code = """
-                float dr;
-                float v = note->volume;
-                float k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                dr = sin(s * note->frequency / 44100.0f * 3.1415926);
-                return v*dr;
-            """.replace("            ", "")
-            name = get_input(name_string, required=True, info_string="Enter name of tool")
-            code = f"\n    /*Enter code here to generate sample 's' from note 'note' (rnd is white noise from -1 to 1)*/{base_of_code}"
-            t = SynthesizerTool(name, code)
-            self.configs.kernel.tools.append(t)
+        def save_tool(x):
+            # request for filename
+            def path_string(x):
+                if not os.path.exists(os.path.dirname(x)):
+                    raise Exception(f"Path <{os.path.basename(x)}> not exists")
+                return x
+            p = get_input(path_string, info_string="Enter path to file (for export into)")
+            if p is None:
+                return
+            # to save
+            s = x.to_string()
+            with open(p, "w") as file:
+                file.write(s)
+        def rename_tool(x):
+            s = get_input(name_request_string, info_string="Enter name of tool, another tool's name to copy, <del> to delete")
+            if s.startswith("new name:"):
+                name = s[s.find(':')+1:].strip()
+                x.name = name
+            elif s.startswith("copy this tool to:"):
+                name = s[s.find(':')+1:].strip()
+                try:
+                    idx = list(map(lambda x: x.name, self.configs.kernel.tools)).index(name)
+                except Exception as e:
+                    return None
+                self.configs.kernel.tools[idx] = x.copy()
+                self.configs.kernel.tools[idx].name = name
+            elif s == "WARNING: Delete this tool":
+                name = x.name
+                try:
+                    idx = list(map(lambda x: x.name, self.configs.kernel.tools)).index(name)
+                    self.configs.kernel.tools.pop(idx)
+                    for t in self.tacts:
+                        for i in range(len(t.notes)-1,-1,-1):
+                            if t.notes[i].tool == idx:
+                                t.notes.pop(i)
+                except Exception as e:
+                    ...
         def swap_tools(tid1, tid2):
             self.configs.kernel.tools[tid1], self.configs.kernel.tools[tid2] = self.configs.kernel.tools[tid2], self.configs.kernel.tools[tid1]
             for t in self.tacts:
@@ -341,10 +383,15 @@ class SynthesizerProject:
                         note.tool = tid1
                     elif note.tool == tid1:
                         note.tool = tid2
-        def name_string(x):
+        def name_request_string(x):
+            x = x.strip().replace(" ", "_")
             if not x.strip():
-                raise Exception("Enter not empty string (left and right spaces will be cutted)")
-            return x.strip()
+                raise Exception("Enter not empty string (left and right spaces will be cut)")
+            if x == "del":
+                return "WARNING: Delete this tool"
+            if x in list(map(lambda x: x.name, self.configs.kernel.tools)):
+                return f"copy this tool to: {x}"
+            return f"new name: {x}"
         def in_float_01(x):
             x = float(x)
             if x < 0 or x > 1.0:
@@ -362,15 +409,17 @@ class SynthesizerProject:
             "volume": lambda x: x.configs.volume,
             "legato_mod": lambda x: x.configs.legato_mod,
             "use stereo": lambda x: x.configs.stereo,
+            "export": lambda x: "<export>",
         }
         rows_keys = list(rows.keys())
         rows_edit = {
-            "name": lambda x: setattr(x, "name", s) if (s := get_input(name_string, info_string="Enter name of tool")) is not None else None,
+            "name": lambda x: rename_tool(x),
             "code": lambda x: moditify_code(x),
             "mute": lambda x: setattr(x.configs, 'mute', not x.configs.mute),
             "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01, info_string="Enter volume of tool")) is not None else None,
             "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive, info_string="Enter legato mod of tool")) is not None else None,
             "use stereo": lambda x: setattr(x.configs, 'stereo', not x.configs.stereo),
+            "export": lambda x: save_tool(x),
         }
         def get_input(validate, required=False, info_string=""):
             s = ""
@@ -378,6 +427,9 @@ class SynthesizerProject:
             sc.hline(self.h // 2 - 1, 0, '-', self.w)
             if required:
                 st = f"{info_string} [required]"
+                addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
+            else:
+                st = f"{info_string}"
                 addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
             sc.hline(self.h // 2, 0, ' ', self.w)
             sc.hline(self.h // 2 + 1, 0, '-', self.w)
@@ -418,6 +470,70 @@ class SynthesizerProject:
                 return validate(s)
             except Exception as e:
                 return None
+        def new_tool():
+            # select - Load or new
+            sel = 0
+            s = ["create new tool", "load from file"]
+            waiting = True
+            sc.hline(self.h // 2 - 1, 0, '-', self.w)
+            st = f"select how to create new tool:"
+            addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
+            sc.hline(self.h // 2, 0, ' ', self.w)
+            sc.hline(self.h // 2 + 1, 0, '-', self.w)
+            while waiting:
+                # draw state
+                sc.hline(self.h // 2, 0, ' ', self.w)
+                addstr(self.h // 2, self.w // 2 - len(s[0])-1, s[0], c.path.unfocus if sel == 0 else c.base)
+                addstr(self.h // 2, self.w // 2 + 2, s[1], c.path.unfocus if sel == 1 else c.base)
+                addstr(self.h // 2, self.w // 2, '|', c.base)
+                sc.refresh()
+                # read key press
+                while True:
+                    key = sc.getch()
+                    if key == -1:
+                        break
+                    elif key == curses.KEY_RESIZE:
+                        curses.resize_term(*sc.getmaxyx())
+                        sc.clear()
+                        sc.refresh()
+                    elif key == 27:
+                        return
+                    elif key == 10: # confirm
+                        waiting = False
+                        break
+                    elif key == curses.KEY_RIGHT:
+                        sel = 1
+                    elif key == curses.KEY_LEFT:
+                        sel = 0
+            if sel == 0:
+                base_of_code = """
+                    float dr;
+                    float v = note->volume;
+                    float k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    dr = sin(s * note->frequency / 44100.0f * 3.1415926);
+                    return v*dr;
+                """.replace("            ", "")
+                name = get_input(name_string, required=True, info_string="Enter name of tool")
+                code = f"\n    /*Enter code here to generate sample 's' from note 'note' (rnd is white noise from -1 to 1)*/{base_of_code}"
+                t = SynthesizerTool(name, code)
+                self.configs.kernel.tools.append(t)
+            else:
+                def path_string(x):
+                    if not os.path.exists(x):
+                        raise Exception(f"Path <{x}> not exists")
+                    return x
+                filename = get_input(path_string, info_string="Enter path to file (to load from)")
+                if filename is None:
+                    return
+                try:
+                    with open(filename, "r") as file:
+                        s = file.read()
+                    t = SynthesizerTool.from_string(s)
+                    self.configs.kernel.tools.append(t)
+                except Exception as e:
+                    self.log(str(e),c.base)
+                    return
         def draw():
             nonlocal v, rows
             # draw tools table
@@ -1927,17 +2043,797 @@ class SynthesizerProject:
             note(0, '3#',  t+3.0, 1)
             note(0, '5',  t+4.0, 8)
 
+        def whispers():
+            # configure tools:
+            self.configs.kernel.tools.clear()
+            self.configs.kernel.tools.append(SynthesizerTool(name="Electro_Soprano", code="""
+                    float freq[] = {
+                        1.0,
+                        0.5,
+                        0.2,
+                        0.05,
+                        0.1,
+                        0.0025,
+                        0.001
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
 
-        tact()
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1);
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*dr;
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool(name="Violin", code="""
+                    float freq[] = {
+                        0.2,
+                        0.6,
+                        0.05,
+                        0.8,
+                        0.05,
+                        0.025,
+                        0.0125,
+                        0.5,
+                        0.0,
+                        0.026,
+                        0.0,
+                        0.1,
+                        0.0,
+                        0.015,
+                        0.0,
+                        0.4,
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1) * 0.25;
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*dr;
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool(name="Alto", code="""
+                    float freq[] = {
+                        0.25,
+                        0.4,
+                        0.05,
+                        0.6,
+                        0.05,
+                        0.25,
+                        0.15,
+                        0.8,
+                        0.015,
+                        0.005,
+                        0.015,
+                        0.3,
+                        0.015,
+                        0.005,
+                        0.015,
+                        0.6,
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1) * 0.125;
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*dr;
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool(name="Cello", code="""
+                    float freq[] = {
+                        0.5,
+                        0.6,
+                        0.05,
+                        0.7,
+                        0.05,
+                        0.25,
+                        0.15,
+                        0.8,
+                        0.015,
+                        0.005,
+                        0.015,
+                        0.1,
+                        0.015,
+                        0.005,
+                        0.015,
+                        0.6,
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1) * 0.125;
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*dr;
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool(name="Bass", code="""
+                    float freq[] = {
+                        0.2,
+                        0.5,
+                        0.05,
+                        1.0,
+                        0.05,
+                        0.025,
+                        0.0125,
+                        0.3,
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1) * 0.25;
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*(smoothstep(-0.2, 0.2, dr) * 2.0 - 1.0);
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
+                float dr;
+                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                return v * rnd;
+            """.replace(" " * 12, "")))
+
+            self.configs.kernel.tools[0].configs.legato_mod = 1.5
+            self.configs.kernel.tools[1].configs.legato_mod = 1.5
+            self.configs.kernel.tools[2].configs.legato_mod = 1.5
+            self.configs.kernel.tools[3].configs.legato_mod = 1.5
+            self.configs.kernel.tools[4].configs.legato_mod = 1.5
+            self.configs.kernel.tools[5].configs.legato_mod = 0.5
+
+            self.configs.kernel.tools[0].configs.volume = 0.15
+            self.configs.kernel.tools[1].configs.volume = 0.15
+            self.configs.kernel.tools[2].configs.volume = 0.1
+            self.configs.kernel.tools[3].configs.volume = 0.1
+            self.configs.kernel.tools[4].configs.volume = 0.1
+            self.configs.kernel.tools[5].configs.volume = 0.2
+
+
+            t = 0
+            ddt = 16   #   4/4
+            time_speed = 0.25
+
+
+            #    DO   DO#    RE   RE#   MI   FA   FA#   SO   SO#  LA   LA#    SI
+            r = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+            def tone2(x):
+                if x == "F":
+                    return "F#"
+                if x == "C":
+                    return "C#"
+                return x
+
+            def mytact(s):
+                nonlocal t
+                # for all lines
+                self.tacts.append(SynthesizerProjectTact(t))
+                prev_num = -1
+                vapp = [1.0] * len(self.configs.kernel.tools)
+                for line in map(str.strip, s.split('\n')):
+                    if line and line.startswith("volume"):
+                        vapp = eval("(" + line[line.find('=')+1:] + ")")
+                    if line and line[0].isdigit():
+                        # get instrument id [num]
+                        num, content = line.split('.', 1)
+                        num = int(num)
+                        if num < prev_num:
+                            t += ddt # new tact
+                            self.tacts.append(SynthesizerProjectTact(t))
+                        prev_num = num
+
+                        tt = t
+                        # add all notes
+                        prev_len, prev_volume = 1.0, 1.0
+                        for note in content.split():
+                            vv = vapp[num]
+                            if note[-1] == '*':
+                                vv *= 1.5
+                                note = note[:-1]
+                            elif note[-1] == 'v':
+                                vv *= 0.5
+                                note = note[:-1]
+                            # parse note
+                            a = note.split('/')
+                            f, l, v = "A", prev_len, prev_volume
+                            if len(a) >= 1:
+                                f = a[0]
+                            if len(a) >= 2 and a[1]:
+                                l = eval(a[1])
+                            if len(a) >= 3 and a[2]:
+                                tt = t + eval(a[2])
+                            if len(a) >= 4 and a[3]:
+                                v = eval(a[3])
+                            # calculate frequency
+                            k = 0
+                            while k < len(f) and f[k].isalpha():
+                                k += 1
+                            nt = f[:k]
+                            nt = tone2(nt)
+                            nt = r.index(nt)
+                            z = int(f[k:]) - 4
+                            fq = 523.25 * pow(2, z + nt / 12)
+                            add(tt * time_speed, fq, l * time_speed, v*vv, num)
+                            prev_len, prev_volume = l, v
+                            tt += l
+                t += ddt
+
+            mytact("""
+            # ---------------------------------------- first ---------------------------------------
+            
+            0. G4/8 F4
+            1.
+            2. F3/16*4
+            3. B2/16*4
+            4.
+            5.
+            
+            
+            0. C5/8 B4
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. D5/8 C5/4 B4
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. F4/16
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. G4/8 F4
+            1.
+            2. G3/16*4
+            3. B2/16*4
+            4.
+            5.
+            
+            
+            0. C5/8 B4
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. D5/8 C5/4 D5
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. D5/16
+            1.
+            2.
+            3.
+            4.
+            5.
+            
+            # ---------------------------------------- represe+bass ---------------------------------------
+            
+            0. G4/8 F4
+            1. B3/4/4 B3 B3/2 B3/4
+            2. F3/16*4
+            3. B2/16*4
+            4. B2/2//0.5 B2 B2/12+16
+            5.
+            
+            
+            0. C5/8 B4
+            1. C4/4/2 C4/2 C4/4 B3/4
+            2.
+            3.
+            4.  
+            5.
+            
+            
+            0. D5/8 C5/4 B4
+            1. B3/4/4 B3 B3/2 D4/4
+            2.
+            3.
+            4. B2/2//0.5 B2 B2/12+16
+            5.
+            
+            
+            0. F4/16
+            1. C4/4/2 D4/2 C4/4 B3/4
+            2.
+            3.
+            4.
+            5.
+            
+            
+            0. G4/8 F4
+            1. B3/4/4 B4 F4
+            2. G3/16*4
+            3. B2/16*4
+            4. B3/2//0.5 B3 B3 B3 B3 B3 B3 B3
+            5.
+            
+            
+            0. C5/8 B4
+            1. B3/4/4 B4 E4
+            2.
+            3.
+            4. B3/2//0.5 B3 B3 B3 B3 B3 B3 B3
+            5.
+            
+            
+            0. D5/8 C5/4 D5
+            1. B3/2/2 D4/4 C4 B3 
+            2.
+            3.
+            4. B3/2//0.5 B3 B3 B3 B3 B3 B3 B3
+            5.
+            
+            
+            0. 
+            1. D4/4 C4 C4 B3
+            2.
+            3.
+            4.
+            5.
+            
+            # ---------------------------------------- big boom #1 ---------------------------------------
+            
+            volume = 2.0, 1.25, 2.0, 2.0, 2.0, 2.0
+            
+            0. B5/2* B5 B5* B5 F5* F5 F5* F5 
+            1. F5/2* F5 F5* F5 D5* D5 D5* D5 
+            2. B4/2* B4 B4* B4 E4* E4 E4* E4
+            3. B2/4v B2v F3 F3 
+            4. B3/4* B3* B2//10/1.0 B2 
+            5.
+            
+            0. G5/2* G5 G5* G5 F5* F5 F5* F5 
+            1. E5/2* E5 E5* E5 D5* D5 D5* D5 
+            2. G4/2* G4 G4* G4 F4* F4 F4* F4
+            3. G3/4 G3 F3 F3 
+            4. B2/4/2 B2 B2/2 B2/4 
+            5.
+            
+            0. D5/2* D5 D5* D5 C5* C5 D5* D5 
+            1. B4/2* B4 B4* B4 A4* A4 B4* B4
+            2. D4/2* D4 D4* D4 C4* C4 D4* D4
+            3. B2/4v B2v C4 B3
+            4. D4/4 B2v B2/4/10 B2 
+            5.
+            
+            0. C5/2* C5 C5* C5 B4* B4 B4* B4 
+            1. G4/2* G4 G4* G4 F4* F4 F4* F4 
+            2. C4/2* C4 C4* C4 B3* B3 B3* B3
+            3. F3/4 F4 D4/2 C4 B3/4
+            4. B2/4/2 B2/2 B2 B2 B2/4 
+            5.
+            
+            # ---------------------------------------- big boom #1 [REP] ---------------------------------------
+            
+            volume = 1.5, 1.0, 1.4, 1.5, 1.5, 1.0
+            
+            0. B5/2* B5 B5* B5 F5* F5 F5* F5 
+            1. F5/2* F5 F5* F5 D5* D5 D5* D5 
+            2. B4/2* B4 B4* B4 E4* E4 E4* E4
+            3. B2/4v B2v F3 F3 
+            4. B3/4* B3* B2//10/1.0 B2 
+            5. 
+            
+            0. G5/2* G5 G5* G5 F5* F5 F5* F5 
+            1. E5/2* E5 E5* E5 D5* D5 D5* D5 
+            2. G4/2* G4 G4* G4 F4* F4 F4* F4
+            3. G3/4 G3 F3 F3 
+            4. B2/4/2 B2 B2/2 B2/4 
+            5.
+            
+            0. D5/2* D5 D5* D5 C5* C5 D5* D5 
+            1. B4/2* B4 B4* B4 A4* A4 B4* B4
+            2. D4/2* D4 D4* D4 C4* C4 D4* D4
+            3. B2/4v B2v C4 B3
+            4. D4/4 B2v B2/4/10 B2 
+            5.
+            
+            0. C5/2* C5 C5* C5 B4* B4 B4/4* 
+            1. G4/2* G4 G4* G4 F4* F4 F4/4* 
+            2. C4/2* C4 C4* C4 B3* B3 B3/4*
+            3. F3/4 F4 D4/2 C4 B3/4
+            4. B2/4/2 B2/2 B2 B2 B2/4 
+            5.
+            
+            # ---------------------------------------- quit part #2 ---------------------------------------
+            
+            volume = 1.0, 1.5, 1.25, 1.75, 0.75, 1.0
+            
+            0. 
+            1. B3/4/4 B3 B3/2 B3/4
+            2. G3/8 F3
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. 
+            5.
+            
+            0. 
+            1. C4/4/2 C4/2 C4/4 B3/4
+            2. C4/8 B3
+            3. B2/2/2 B2 B2 B2/4
+            4. 
+            5.
+            
+            0. 
+            1. B3/4/4 B3 B3/2 D4/4
+            2. D4/8 C4/4 B3/4
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. 
+            5.
+            
+            0. 
+            1. C4/4/2 D4/2 C4/4 B3
+            2. F3/16
+            3. B2/2/2 B2 B2 B2/4
+            4. 
+            5.
+            
+            # ---------------------------------------- quit part up move [THIRD PAGE] ---------------------------------------
+            
+            0. 
+            1. B3/4/4 B3 F4
+            2. G3/8 F3
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. 
+            5.
+            
+            0. 
+            1. B3/4/4 B3 E4
+            2. C4/8 B3
+            3. B2/2/2 B2 B2 B2/4
+            4. 
+            5.
+            
+            0. 
+            1. B3/2/2 D4/4 C4 B3
+            2. D4/8 C4/4 D4/4
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. 
+            5.
+            
+            0. 
+            1. D4/4 C4 C4 B3
+            2. D4/16
+            3. B2/2/2 B2 B2 B2/4
+            4. 
+            5.
+            
+            # ---------------------------------------- quit part #3 ---------------------------------------
+            
+            volume = 1.0, 1.5, 1.25, 1.75, 0.75, 1.0
+            
+            0. 
+            1. B3/4/4 B3 B3/2 B3/4
+            2. G3/8 F3
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. B3/2 B3 B3 B3/4/10 B3/2
+            5.
+            
+            0. 
+            1. C4/4/2 C4/2 C4/4 B3/4
+            2. C4/8 B3
+            3. B2/2/2 B2 B2 B2/4
+            4. B3/2/2 B3 B3 B3/4
+            5.
+            
+            0. 
+            1. B3/4/4 B3 B3/2 D4/4
+            2. D4/8 C4/4 B3/4
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. B3/2 B3 B3 B3/4/10 B3/2
+            5.
+            
+            0. 
+            1. C4/4/2 D4/2 C4/4 B3
+            2. F3/16
+            3. B2/2/2 B2 B2 B2/4
+            4. B3/2/2 B3 B3 B3/4
+            5.
+            
+            # ---------------------------------------- quit part 3 up move ---------------------------------------
+            
+            0. 
+            1. B3/4/4 B3 F4
+            2. G3/8 F3
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. B3/2 B3 B3 B3/4/10 B3/2
+            5.
+            
+            0. 
+            1. B3/4/4 B3 E4
+            2. C4/8 B3
+            3. B2/2/2 B2 B2 B2/4
+            4. B3/2/2 B3 B3 B3/4
+            5.
+            
+            0. 
+            1. B3/2/2 D4/4 C4 B3
+            2. D4/8 C4/4 D4/4
+            3. B2/2 B2 B2 B2/4/10 B2/2
+            4. B3/2 B3 B3 B3/4/10 B3/2
+            5.
+            
+            0. 
+            1. E4/4 D4/2 C4/2 D4/8
+            2. D4/16
+            3. B2/2/2 B2 B2 B2/4
+            4. B3/2/2 B3 B3 B3/4
+            5.
+            
+            # --------------------------- intermelody... ----------------------
+            
+            volume = 2.0, 1.0, 1.0, 1.0, 2.0, 1.0
+            
+            0. F4/4 F4 F4//10 F4
+            1. 
+            2. 
+            3. 
+            4. F3/4 F3 F3//10 F3
+            5.
+            
+            
+            0. C4/2/2 C4 C4 C4/4
+            1. 
+            2. 
+            3. 
+            4. C3/2/2 C3 C3 C3/4
+            5.
+            
+            # --------------------------------------- big boom #2 ----------------------------------------------
+            
+            volume = 2.0, 1.5, 2.0, 2.0, 3.0, 2.0
+            
+            0. F5/16* D5/4/12
+            1. B4/16* F4/4/12
+            2. C5/16* F4/2/8 F4v F4 F4v
+            3. B4/16* B3/2/8 B3v D4 D4v
+            4.       B2/4/8 B2
+            5.
+            
+            0. E5/4 D5 C5 D5
+            1. G4/4 F4 E4 F4
+            2. G4/2 G4v G4 G4v F4 F4v F4 F4v
+            3. E4/2 E4v D4 D4v C4 C4v D4 D4v
+            4. B2/2/2 B2 B2/4/8 B2/2 B2
+            5.
+            
+            0. G5/16* D5/4/12
+            1. B4/16* G4/4/12
+            2. C5/16* G4/2/8 G4 G4 G4
+            3. D4/16* B3/2/8 B3 D4 D4
+            4.       G3/4/8 G3
+            5.
+            
+            0. E5/4 D5 C5 D5
+            1. A4/4 G4 F4 G4
+            2. F4/2 F4v F4 F4v G4 G4v G4 G4v
+            3. E4/2 E4v D4 D4v C4 C4v D4 D4v
+            4. G3/2/2 G3 G3/4/8 G3/2 G3
+            5.
+            
+            # ---------------- glide to earth ---------------
+            
+            0. A5/8 G5
+            1. F5/8 E5
+            2. B4/2 B4v B4 B4v A4 A4v A4 A4v
+            3. B3/2 B3v B3 B3v C4 C4v C4 C4v 
+            4. E3/4 E3 E3 E3
+            5.
+            
+            0. F5/8 E5
+            1. D5/8 C5
+            2. G4/2 G4v G4 G4v E4 E4v E4 E4v
+            3. D4/2 D4v D4 D4v E4 E4v E4 E4v 
+            4. E3/4 E3 E3 E3
+            5.
+            
+            0. F5/8 F5/4 F5
+            1. D5/8 D5/4 D5
+            2. F4/2 F4v F4 F4v D4 D4v D4 D4v
+            3. D4/2 D4v D4 D4v A3 A3v A3 A3v 
+            4. D3/8 D3/4 D3
+            5.
+            
+            0. A5/4 G5 F5 G5
+            1. F5/4 E5 D5 E5
+            2. E4/2 E4v E4 E4v F4 F4v F4 F4v
+            3. E4/2 E4v C4 C4v B3 B3v C4 C4v 
+            4. C3/2/2 C3 C3/4/8 C3/2 C3
+            5.
+            
+            # ---------------------------------------- reprise --------------------------------------
+            
+            volume = 1.6, 1.26, 1.7, 1.6, 2.0, 1.7
+            
+            0. F5/16* D5/4/12
+            1. B4/16* F4/4/12
+            2. C5/16* F4/2/8 F4v F4 F4v
+            3. B4/16* B3/2/8 B3v D4 D4v
+            4.       B2/4/8 B2
+            5.
+            
+            0. E5/4 D5 C5 D5
+            1. G4/4 F4 E4 F4
+            2. G4/2 G4v G4 G4v F4 F4v F4 F4v
+            3. E4/2 E4v D4 D4v C4 C4v D4 D4v
+            4. B2/2/2 B2 B2/4/8 B2/2 B2
+            5.
+            
+            0. G5/16* D5/4/12
+            1. B4/16* G4/4/12
+            2. C5/16* G4/2/8 G4 G4 G4
+            3. D4/16* B3/2/8 B3 D4 D4
+            4.       G3/4/8 G3
+            5.
+            
+            0. E5/4 D5 C5 D5
+            1. A4/4 G4 F4 G4
+            2. F4/2 F4v F4 F4v G4 G4v G4 G4v
+            3. E4/2 E4v D4 D4v C4 C4v D4 D4v
+            4. G3/2/2 G3 G3/4/8 G3/2 G3
+            5.
+            
+            # ---------------- glide to earth ---------------
+            
+            0. A5/8 G5
+            1. F5/8 E5
+            2. B4/2 B4v B4 B4v A4 A4v A4 A4v
+            3. B3/2 B3v B3 B3v C4 C4v C4 C4v 
+            4. E3/4 E3 E3 E3
+            5.
+            
+            0. F5/8 E5
+            1. D5/8 C5
+            2. G4/2 G4v G4 G4v E4 E4v E4 E4v
+            3. D4/2 D4v D4 D4v E4 E4v E4 E4v 
+            4. E3/4 E3 E3 E3
+            5.
+            
+            0. F5/8 F5/4 F5
+            1. D5/8 D5/4 D5
+            2. F4/2 F4v F4 F4v D4 D4v D4 D4v
+            3. D4/2 D4v D4 D4v A3 A3v A3 A3v 
+            4. D3/8 D3/4 D3
+            5.
+            
+            0. C5/4
+            1. A5/4 G5 F5 G5
+            2. E4/4
+            3. A3/4 
+            4. C3/4
+            5.
+            
+            # ------------------------------- good place [59] -----------------------------------
+            
+
+            volume = 2.0, 1.25, 2.0, 2.0, 2.5, 2.0
+            
+            0. B5/2* B5 B5* B5 F5* F5 F5* F5 
+            1. F5/8* D5/2* D5 D5* D5 
+            2. B4/2* B4 B4* B4 E4* E4 E4* E4
+            3. B2/4v B2v F3/2* F3 F3* F3 
+            4. B3/4* B3* B2//10 B2 
+            5.
+            
+            0. G5/2* G5 G5* G5 F5* F5 F5* F5 
+            1. E5/2* E5 E5* E5 D5* D5 D5* D5 
+            2. G4/2* G4 G4* G4 F4* F4 F4* F4
+            3. G3/2* G3 G3* G3 F3* F3 F3* F3 
+            4. B2/4/2 B2 B2/2 B2/4 
+            5.
+            
+            0. D5/2* D5 D5* D5 C5* C5 D5* D5 
+            1. B4/2* B4 B4* B4 A4* A4 B4* B4
+            2. D4/2* D4 D4* D4 C4* C4 D4* D4
+            3. B2/4v B2v C4/2 C4v B3 B3v
+            4. D4/4 B2v B2/4/10 B2 
+            5.
+            
+            0. C5/2* C5 C5* C5 B4* B4 B4* B4 
+            1. A5/4//2.0 G5 F5 G5
+            2. C4/2* C4 C4* C4 B3* B3 B3* B3
+            3. B2/2 B2v F3 F3v D4 C4 B3/4
+            4. B2/4/2 B2/2 B2 B2 B2/4 
+            5.
+            
+            # ---------------------------------------- good place [REP] ---------------------------------------
+            
+            volume = 1.8, 1.6, 1.7, 2.0, 2.3, 1.0
+            
+            0. B5/2 B5v B5 B5v F5 F5v F5 F5v 
+            1. F5/4//2.0 F5///1.0 D5/2 D5v D5 D5v 
+            2. B4/2 B4v B4 B4v E4 E4v E4 E4v
+            3. B2/4 B2 F3/2 F3v F3 F3v
+            4. B3/4* B3* B2//10 B2 
+            5. 
+            
+            0. G5/2 G5v G5 G5v F5 F5v F5 F5v 
+            1. E5/2 E5v E5 E5v D5 D5v D5 D5v 
+            2. G4/2 G4v G4 G4v F4 F4v F4 F4v
+            3. G3/2 G3v G3 G3v F3 F3v F3 F3v 
+            4. B2/4/2 B2 B2/2 B2/4 
+            5.
+            
+            0. D5/2 D5v D5 D5v C5 C5v D5 D5v 
+            1. B4/2 B4v B4 B4v A4 A4v B4 B5v 
+            2. D4/2 D4v D4 D4v C4 C4v D4 D4v
+            3. B2/4v B2v C4 B3
+            4. D4/4 B2v B2/4/10 B2 
+            5.
+            
+            0. C5/2 C5v C5 C5v B4 B4v B4 B4v 
+            1. G4/2 G4v G4 G4v F4 F4v F4 F4v
+            2. C4/2 C4v C4 C4v B3 B3v B3 B3v
+            3. F3/4 F4 D4/2 C4 B3/4
+            4. B2/4/2 B2/2 B2 B2 B2/4 
+            5.
+            
+            # ------------------------------------------ quit #3 [67] ---------------------------------------------
+            
+            
+            """)
+
+            # for i in self.tacts:
+            #     for n in i.notes:
+            #         n.time -= t * time_speed * dt - 12 * ddt * time_speed * dt
+            #         if n.time < 0:
+            #             n.volume = 0
+            #             n.time = 0
+            #             n.length = 0.1
+
+        what = 'w'
         if what == 't':
+            tact()
             lm = 1.25
             tsoy()
         elif what == 'm':
+            tact()
             lm = 2.0
             metal1()
-        else: # 'r'
+        elif what == 'r':
+            tact()
             lm = 4.0
             river()
+        else: # 'w'
+            whispers()
 
         return
 
@@ -2054,7 +2950,7 @@ class SynthesizerProject:
             dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
             return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
         """.replace(" "*8,"")))
-        self.configs.kernel.tools.append(SynthesizerTool(name="Dram", code="""
+        self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
             float dr;
             float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
             v *= fmax(0.01f, k);
@@ -2066,10 +2962,10 @@ class SynthesizerProject:
         # INIT?
 
         tt = choice('rtm')
-        self.create(tt,dt=0.25*1.5)
-        self.log("created music: " + tt, c.log.info)
         self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
         self.configs.kernel.tools[1].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
+        self.create(tt,dt=0.25*1.5)
+        self.log("created music: " + tt, c.log.info)
 
         while True:
             self.resize()
