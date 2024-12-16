@@ -164,7 +164,7 @@ res += fv*v*(smoothstep(-0.1, 0.1, dr) * 2.0 - 1.0);
         return res;
  }
 
-float Drum(float s, struct note *note, float rnd){ 
+float Drum22222222222222222222222222222222222222222222222222222222222222222222222(float s, struct note *note, float rnd){ 
     float dr;
     float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
     v *= fmax(0.01f, k);
@@ -203,7 +203,7 @@ case 1: res += Violin(s, notes + n, rnd); break;
 case 2: res += Alto(s, notes + n, rnd); break;
 case 3: res += Cello(s, notes + n, rnd); break;
 case 4: res += Bass(s, notes + n, rnd); break;
-case 5: res += Drum(s, notes + n, rnd); break;
+case 5: res += Drum22222222222222222222222222222222222222222222222222222222222222222222222(s, notes + n, rnd); break;
 
             default:
                 break;
