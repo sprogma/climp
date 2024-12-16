@@ -101,7 +101,7 @@ float Alto(float s, struct note *note, float rnd){
 float f = note->frequency * (fqid + 1) * 0.125;
 float fv = freq[fqid];
 dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-res += fv*v*dr;
+res += fv*v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
         }
         return res;
  }
@@ -134,7 +134,7 @@ float Cello(float s, struct note *note, float rnd){
 float f = note->frequency * (fqid + 1) * 0.125;
 float fv = freq[fqid];
 dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-res += fv*v*dr;
+res += fv*v*(smoothstep(-0.2, 0.2, dr)*2.0-1.0);
         }
         return res;
  }
@@ -159,7 +159,7 @@ float Bass(float s, struct note *note, float rnd){
 float f = note->frequency * (fqid + 1) * 0.25;
 float fv = freq[fqid];
 dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-res += fv*v*(smoothstep(-0.2, 0.2, dr) * 2.0 - 1.0);
+res += fv*v*(smoothstep(-0.1, 0.1, dr) * 2.0 - 1.0);
         }
         return res;
  }
