@@ -145,22 +145,74 @@ class SynthesizerTool:
         return x
 
     @staticmethod
-    def from_wave(name, file):
+    def from_wave(log_fn, name, file):
         # read file
         sound = pygame.mixer.Sound(file)
         y = pygame.sndarray.array(sound)
-        print(y)
-        exit(0)
+        # convert y to float64 in [-1.0, 1.0]
+        old_type = y.dtype
+        y = y.astype('float64')
+        # normalize y
+        y = (y - np.min(y)) / (np.max(y) - np.min(y)) * 2.0 - 1.0
+        # make one chanel from two
+        if len(y.shape) == 2 and y.shape[1] == 2:
+            y = (y[:,0] + y[:,1]) * 0.5
+        # multiply y with window (important part)
+        window = np.zeros(y.shape, y.dtype)
+        for i in range(window.shape[0]):
+            x = i / window.shape[0]
+            window[i] = math.sin(math.pi * x)
+        y *= window
+        # generate wave frequency information
+        discrete = 1/44100  # interval of y
+        a = np.fft.fft(y)[:y.shape[0]//2]
+        f = np.fft.fftfreq(y.shape[0], d=discrete)[:y.shape[0]//2]
+        # find maximum waves
+        mod = np.abs(a)
+        mod = np.column_stack((f, mod))
+        # remove some first frequencies (constant shifts)
+        mod = mod[2:]
+        # sort other data
+        mod = mod[mod[:,1].argsort()[::-1]]
+        # find base frequency:
+        base_frequency = mod[0][0] # max volume frequency
+        # select max frequencies
+        notes_count = min(2000, len(mod))
+        selection = {}
+        for i in range(notes_count):
+            selection[mod[i][0] / base_frequency] = mod[i][1]
+        # normalize selected amplitudes
+        selection_sum = sum(selection.values())
+        for i in selection:
+            selection[i] /= selection_sum
+        prc = np.sum(mod[:notes_count-1,1]) / np.sum(mod[:,1])
+        log_fn(f"Used {notes_count} frequencies. (from {len(mod)}), quality: {prc*100:.1f}% , base: {base_frequency}")
         # generate code for file
-        code = """
-            float res = 0;
-            for (int i = 0; i < sizeof(frq)/sizeof(*frq); ++i)
-            {
-                res += ;
-            }
+        frq = ",".join(map(str, selection.keys()))
+        amp = ",".join(map(str, selection.values()))
+        code = f"""
+            float frq[] = {{
+                {frq}
+            }};
+            float amp[] = {{
+                {amp}
+            }};
+            
+            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+            v *= fmax(0.01f, k);
+            
+            float res = 0.0, dr;
+            for (int i = 0; i < {len(selection)}; ++i)
+            {{
+                float f = note->frequency * (frq[i] + 1);
+                float fv = amp[i];
+                dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                res += fv*v*dr;
+            }}
             return res;
         """.replace(" "*12, " "*4)
         self = SynthesizerTool(name, code)
+        return self
 
 
 class SynthesizerProject:
@@ -371,6 +423,8 @@ class SynthesizerProject:
                 file.write(s)
         def rename_tool(x):
             s = get_input(name_request_string, info_string="Enter name of tool, another tool's name to copy, <del> to delete")
+            if s is None:
+                return None
             if s.startswith("new name:"):
                 name = s[s.find(':')+1:].strip()
                 x.name = name
@@ -577,7 +631,7 @@ class SynthesizerProject:
                 if filename is None:
                     return
                 try:
-                    t = SynthesizerTool.from_wave(name, filename)
+                    t = SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), name, filename)
                     self.configs.kernel.tools.append(t)
                 except Exception as e:
                     self.log(str(e),c.base)
