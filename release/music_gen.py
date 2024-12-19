@@ -145,54 +145,113 @@ class SynthesizerTool:
         return x
 
     @staticmethod
-    def from_wave(log_fn, name, file):
+    def from_wave(log_fn, name, file, base_frequency_multipler=1.0, bass_boost=0.0, L=64, distortion=None):
         # read file
         sound = pygame.mixer.Sound(file)
+        # sound.play(-1)
         y = pygame.sndarray.array(sound)
         # convert y to float64 in [-1.0, 1.0]
-        old_type = y.dtype
         y = y.astype('float64')
-        # normalize y
-        y = (y - np.min(y)) / (np.max(y) - np.min(y)) * 2.0 - 1.0
         # make one chanel from two
         if len(y.shape) == 2 and y.shape[1] == 2:
             y = (y[:,0] + y[:,1]) * 0.5
-        # multiply y with window (important part)
+        # normalize y
+        y = (y - np.min(y)) / (np.max(y) - np.min(y)) * 2.0 - 1.0
+        # multiply y with window
         window = np.zeros(y.shape, y.dtype)
         for i in range(window.shape[0]):
             x = i / window.shape[0]
-            window[i] = math.sin(math.pi * x)
+            window[i] = (1 - math.cos(math.pi * 2 * x) ) * 0.5
         y *= window
         # generate wave frequency information
         discrete = 1/44100  # interval of y
-        a = np.fft.fft(y)[:y.shape[0]//2]
-        f = np.fft.fftfreq(y.shape[0], d=discrete)[:y.shape[0]//2]
-        # find maximum waves
-        mod = np.abs(a)
-        mod = np.column_stack((f, mod))
+        a = np.fft.fft(y)
+        f = np.fft.fftfreq(y.shape[0], d=discrete)
+
+        # # a = np.abs(a)
+        # a = np.fft.ifft(a)
+        # raw = (np.tanh(a.real) * 32767.0).astype(dtype=np.int16)
+        # raw = np.column_stack((raw, raw)).copy(order='C')
+        # res = pygame.sndarray.make_sound(raw)
+        # res.play()
+        # while True:
+        #     ...
+        # exit(0)
+
+        a = a[:y.shape[0]//2]
+        f = f[:y.shape[0]//2]
         # remove some first frequencies (constant shifts)
-        mod = mod[2:]
+        a = a[2:]
+        f = f[2:]
         # sort other data
-        mod = mod[mod[:,1].argsort()[::-1]]
+        mod = np.abs(a)
+        mod = mod.argsort()[::-1]
+        a = a[mod]
+        p = np.zeros(f.shape, f.dtype)
+        f = f[mod]
+        for i in range(p.shape[0]):
+            p[i] = math.atan2(a[i].real, a[i].imag)
+        # amplitudes
+        a = np.abs(a)
         # find base frequency:
-        base_frequency = mod[0][0] # max volume frequency
-        # select max frequencies
-        notes_count = min(2000, len(mod))
-        selection = {}
-        for i in range(notes_count):
-            selection[mod[i][0] / base_frequency] = mod[i][1]
-        # normalize selected amplitudes
-        selection_sum = sum(selection.values())
-        for i in selection:
-            selection[i] /= selection_sum
-        prc = np.sum(mod[:notes_count-1,1]) / np.sum(mod[:,1])
-        log_fn(f"Used {notes_count} frequencies. (from {len(mod)}), quality: {prc*100:.1f}% , base: {base_frequency}")
+        base_frequency = f[0] / base_frequency_multipler # max volume frequency
+        f *= 1.0 / base_frequency
+
+        # select biggest frequencies
+        a_list = []
+        p_list = []
+        f_list = []
+
+        K = 4
+
+        for i in range(a.shape[0]):
+            f1 = f[i]
+            f2 = 1.0 / f1
+            if (abs(f1 * K - round(f1 * K)) < 0.001 or abs(f2 * K - round(f2 * K)) < 0.001) and (f1 < L and f2 < L):
+                a_list.append(a[i])
+                p_list.append(p[i])
+                f_list.append(f[i])
+
+        if bass_boost < 1.0:
+            bass_boost = 1/bass_boost
+            for i in range(len(a_list)):
+                if f_list[i] >= 1.0:
+                    a_list[i] *= bass_boost
+                if f_list[i] >= 2.0:
+                    a_list[i] *= bass_boost
+                if f_list[i] >= 4.0:
+                    a_list[i] *= bass_boost
+        else:
+            for i in range(len(a_list)):
+                if f_list[i] <= 1.0:
+                    a_list[i] *= bass_boost
+                if f_list[i] <= 0.5:
+                    a_list[i] *= bass_boost
+                if f_list[i] <= 0.25:
+                    a_list[i] *= bass_boost
+
+        a_sum = sum(a_list)
+        for i in range(len(a_list)):
+            a_list[i] /= a_sum
+
+        if distortion is None:
+            sin_txt = "sin_value"
+        else:
+            sin_txt = f"""
+                (3 + {distortion}) * atan(5.0*sinh(0.25*sin_value)) / ({math.pi} + {distortion} * fabs(sin_value))
+            """.replace(" "*12, " "*4)
+
+        log_fn(f"Used {len(a_list)}/{a.shape[0]} frequencies, base: {base_frequency}")
         # generate code for file
-        frq = ",".join(map(str, selection.keys()))
-        amp = ",".join(map(str, selection.values()))
+        frq = ",".join(map(str, f_list))
+        amp = ",".join(map(str, a_list))
+        phs = ",".join(map(str, p_list))
         code = f"""
             float frq[] = {{
                 {frq}
+            }};
+            float phs[] = {{
+                {phs}
             }};
             float amp[] = {{
                 {amp}
@@ -202,11 +261,13 @@ class SynthesizerTool:
             v *= fmax(0.01f, k);
             
             float res = 0.0, dr;
-            for (int i = 0; i < {len(selection)}; ++i)
+            for (int i = 0; i < {len(a_list)}; ++i)
             {{
-                float f = note->frequency * (frq[i] + 1);
+                float f = note->frequency * (frq[i]);
                 float fv = amp[i];
-                dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                float x_pos = s * f / 44100.0f * 0.5 * 3.1415926 * 2.0 + phs[i];
+                float sin_value = sin(x_pos);
+                dr = {sin_txt};
                 res += fv*v*dr;
             }}
             return res;
@@ -2147,173 +2208,202 @@ class SynthesizerProject:
             note(0, '3#',  t+3.0, 1)
             note(0, '5',  t+4.0, 8)
 
-        def whispers():
+        def whispers(instrument_edition=False):
             # configure tools:
             self.configs.kernel.tools.clear()
-            self.configs.kernel.tools.append(SynthesizerTool(name="Electro_Soprano", code="""
-                    float freq[] = {
-                        1.0,
-                        0.5,
-                        0.2,
-                        0.05,
-                        0.1,
-                        0.0025,
-                        0.001
-                    };
-                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                    v *= fmax(0.01f, k);
+            if not instrument_edition:
+                self.configs.kernel.tools.append(SynthesizerTool(name="Electro_Soprano", code="""
+                        float freq[] = {
+                            1.0,
+                            0.5,
+                            0.2,
+                            0.05,
+                            0.1,
+                            0.0025,
+                            0.001
+                        };
+                        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                        v *= fmax(0.01f, k);
 
-                    float res = 0.0, dr;
-                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-                    {
-                        float f = note->frequency * (fqid + 1);
-                        float fv = freq[fqid];
-                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                        res += fv*v*dr;
-                    }
-                    return res;
-            """.replace(" " * 12, "")))
-            self.configs.kernel.tools.append(SynthesizerTool(name="Violin", code="""
-                    float freq[] = {
-                        0.2,
-                        0.6,
-                        0.05,
-                        0.8,
-                        0.05,
-                        0.025,
-                        0.0125,
-                        0.5,
-                        0.0,
-                        0.026,
-                        0.0,
-                        0.1,
-                        0.0,
-                        0.015,
-                        0.0,
-                        0.4,
-                    };
+                        float res = 0.0, dr;
+                        for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                        {
+                            float f = note->frequency * (fqid + 1);
+                            float fv = freq[fqid];
+                            dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                            res += fv*v*dr;
+                        }
+                        return res;
+                """.replace(" " * 12, "")))
+                self.configs.kernel.tools.append(SynthesizerTool(name="Violin", code="""
+                        float freq[] = {
+                            0.2,
+                            0.6,
+                            0.05,
+                            0.8,
+                            0.05,
+                            0.025,
+                            0.0125,
+                            0.5,
+                            0.0,
+                            0.026,
+                            0.0,
+                            0.1,
+                            0.0,
+                            0.015,
+                            0.0,
+                            0.4,
+                        };
+                        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                        v *= fmax(0.01f, k);
+                        
+                        float res = 0.0, dr;
+                        for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                        {
+                            float f = note->frequency * (fqid + 1) * 0.25;
+                            float fv = freq[fqid];
+                            dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                            res += fv*v*dr;
+                        }
+                        return res;
+                """.replace(" " * 12, "")))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Soprano", "test2.mp3", 1.0, L=64, bass_boost=5.0, distortion=100.0))
+                # self.configs.kernel.tools.append(SynthesizerTool(name="Alto", code="""
+                #         float freq[] = {
+                #             0.25,
+                #             0.4,
+                #             0.05,
+                #             0.6,
+                #             0.05,
+                #             0.25,
+                #             0.15,
+                #             0.8,
+                #             0.015,
+                #             0.005,
+                #             0.015,
+                #             0.3,
+                #             0.015,
+                #             0.005,
+                #             0.015,
+                #             0.6,
+                #         };
+                #         float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                #         v *= fmax(0.01f, k);
+                #
+                #         float res = 0.0, dr;
+                #         for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                #         {
+                #             float f = note->frequency * (fqid + 1) * 0.125;
+                #             float fv = freq[fqid];
+                #             dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                #             res += fv*v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+                #         }
+                #         return res;
+                # """.replace(" " * 12, "")))
+                self.configs.kernel.tools.append(SynthesizerTool(name="Cello", code="""
+                        float freq[] = {
+                            0.5,
+                            0.6,
+                            0.05,
+                            0.7,
+                            0.05,
+                            0.25,
+                            0.15,
+                            0.8,
+                            0.015,
+                            0.005,
+                            0.015,
+                            0.1,
+                            0.015,
+                            0.005,
+                            0.015,
+                            0.6,
+                        };
+                        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                        v *= fmax(0.01f, k);
+                        
+                        float res = 0.0, dr;
+                        for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                        {
+                            float f = note->frequency * (fqid + 1) * 0.125;
+                            float fv = freq[fqid];
+                            dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                            res += fv*v*(smoothstep(-0.2, 0.2, dr)*2.0-1.0);
+                        }
+                        return res;
+                """.replace(" " * 12, "")))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Bass", "test5.mp3", 1/4, bass_boost=15.0, L=32, distortion=100.0))
+                # self.configs.kernel.tools.append(SynthesizerTool(name="Bass", code="""
+                #         float freq[] = {
+                #             0.2,
+                #             0.5,
+                #             0.05,
+                #             1.0,
+                #             0.05,
+                #             0.025,
+                #             0.0125,
+                #             0.3,
+                #         };
+                #         float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                #         v *= fmax(0.01f, k);
+                #
+                #         float res = 0.0, dr;
+                #         for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                #         {
+                #             float f = note->frequency * (fqid + 1) * 0.25;
+                #             float fv = freq[fqid];
+                #             dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                #             res += fv*v*(smoothstep(-0.1, 0.1, dr) * 2.0 - 1.0);
+                #         }
+                #         return res;
+                # """.replace(" " * 12, "")))
+                self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
+                    float dr;
                     float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
                     v *= fmax(0.01f, k);
-                    
-                    float res = 0.0, dr;
-                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-                    {
-                        float f = note->frequency * (fqid + 1) * 0.25;
-                        float fv = freq[fqid];
-                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                        res += fv*v*dr;
-                    }
-                    return res;
-            """.replace(" " * 12, "")))
-            self.configs.kernel.tools.append(SynthesizerTool(name="Alto", code="""
-                    float freq[] = {
-                        0.25,
-                        0.4,
-                        0.05,
-                        0.6,
-                        0.05,
-                        0.25,
-                        0.15,
-                        0.8,
-                        0.015,
-                        0.005,
-                        0.015,
-                        0.3,
-                        0.015,
-                        0.005,
-                        0.015,
-                        0.6,
-                    };
-                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                    v *= fmax(0.01f, k);
-                    
-                    float res = 0.0, dr;
-                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-                    {
-                        float f = note->frequency * (fqid + 1) * 0.125;
-                        float fv = freq[fqid];
-                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                        res += fv*v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
-                    }
-                    return res;
-            """.replace(" " * 12, "")))
-            self.configs.kernel.tools.append(SynthesizerTool(name="Cello", code="""
-                    float freq[] = {
-                        0.5,
-                        0.6,
-                        0.05,
-                        0.7,
-                        0.05,
-                        0.25,
-                        0.15,
-                        0.8,
-                        0.015,
-                        0.005,
-                        0.015,
-                        0.1,
-                        0.015,
-                        0.005,
-                        0.015,
-                        0.6,
-                    };
-                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                    v *= fmax(0.01f, k);
-                    
-                    float res = 0.0, dr;
-                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-                    {
-                        float f = note->frequency * (fqid + 1) * 0.125;
-                        float fv = freq[fqid];
-                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                        res += fv*v*(smoothstep(-0.2, 0.2, dr)*2.0-1.0);
-                    }
-                    return res;
-            """.replace(" " * 12, "")))
-            self.configs.kernel.tools.append(SynthesizerTool(name="Bass", code="""
-                    float freq[] = {
-                        0.2,
-                        0.5,
-                        0.05,
-                        1.0,
-                        0.05,
-                        0.025,
-                        0.0125,
-                        0.3,
-                    };
-                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                    v *= fmax(0.01f, k);
-                    
-                    float res = 0.0, dr;
-                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-                    {
-                        float f = note->frequency * (fqid + 1) * 0.25;
-                        float fv = freq[fqid];
-                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-                        res += fv*v*(smoothstep(-0.1, 0.1, dr) * 2.0 - 1.0);
-                    }
-                    return res;
-            """.replace(" " * 12, "")))
-            self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
-                float dr;
-                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-                v *= fmax(0.01f, k);
-                return v * rnd;
-            """.replace(" " * 12, "")))
+                    return v * rnd;
+                """.replace(" " * 12, "")))
 
-            self.configs.kernel.tools[0].configs.legato_mod = 2.0
-            self.configs.kernel.tools[1].configs.legato_mod = 1.5
-            self.configs.kernel.tools[2].configs.legato_mod = 3.0
-            self.configs.kernel.tools[3].configs.legato_mod = 3.0
-            self.configs.kernel.tools[4].configs.legato_mod = 3.0
-            self.configs.kernel.tools[5].configs.legato_mod = 0.5
+                self.configs.kernel.tools[0].configs.legato_mod = 2.0
+                self.configs.kernel.tools[1].configs.legato_mod = 1.5
+                self.configs.kernel.tools[2].configs.legato_mod = 3.0
+                self.configs.kernel.tools[3].configs.legato_mod = 3.0
+                self.configs.kernel.tools[4].configs.legato_mod = 3.0
+                self.configs.kernel.tools[5].configs.legato_mod = 0.5
 
-            self.configs.kernel.tools[0].configs.volume = 0.2
-            self.configs.kernel.tools[1].configs.volume = 0.2
-            self.configs.kernel.tools[2].configs.volume = 0.12
-            self.configs.kernel.tools[3].configs.volume = 0.1
-            self.configs.kernel.tools[4].configs.volume = 0.07
-            self.configs.kernel.tools[5].configs.volume = 0.2
+                self.configs.kernel.tools[0].configs.volume = 0.2 * 0.65
+                self.configs.kernel.tools[1].configs.volume = 0.2 * 0.65
+                self.configs.kernel.tools[2].configs.volume = 0.12*1.25 * 0.65
+                self.configs.kernel.tools[3].configs.volume = 0.1 * 0.65
+                self.configs.kernel.tools[4].configs.volume = 0.12*1.4 * 0.65
+                self.configs.kernel.tools[5].configs.volume = 0.2 * 0.65
+            else: # if instrument_edition
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Soprano", "test2.mp3", 1, L=16, distortion=None))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Violin", "test2.mp3", 1, bass_boost=1.1, L=16, distortion=50.0))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Alto", "test4.mp3", 1/2, bass_boost=1.2, L=32, distortion=None))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Cello", "test1.mp3", 1/2, bass_boost=1.5, L=32, distortion=50.0))
+                self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Bass", "test5.mp3", 1/4, bass_boost=15.0, L=32, distortion=100.0))
+                self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
+                    float dr;
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+                    return v * rnd;
+                """.replace(" " * 12, "")))
 
+
+                self.configs.kernel.tools[0].configs.legato_mod = 2.0
+                self.configs.kernel.tools[1].configs.legato_mod = 1.5
+                self.configs.kernel.tools[2].configs.legato_mod = 3.0
+                self.configs.kernel.tools[3].configs.legato_mod = 3.0
+                self.configs.kernel.tools[4].configs.legato_mod = 3.0
+                self.configs.kernel.tools[5].configs.legato_mod = 0.5
+
+                self.configs.kernel.tools[0].configs.volume = 0.3
+                self.configs.kernel.tools[1].configs.volume = 0.3
+                self.configs.kernel.tools[2].configs.volume = 0.2
+                self.configs.kernel.tools[3].configs.volume = 0.12
+                self.configs.kernel.tools[4].configs.volume = 0.09
+                self.configs.kernel.tools[5].configs.volume = 0.4
 
             t = 0
             ddt = 16   #   4/4
@@ -2390,21 +2480,68 @@ class SynthesizerProject:
                 txt = f.read()
             mytact(txt)
 
-        what = 'w'
-        if what == 't':
+        def test():
+            # configure tools:
+            self.configs.kernel.tools.clear()
+            self.configs.kernel.tools.append(SynthesizerTool(name="Test1", code="""
+                    float freq[] = {
+                        1.0,
+                        0.5,
+                        0.2,
+                        0.05,
+                        0.1,
+                        0.0025,
+                        0.001
+                    };
+                    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                    v *= fmax(0.01f, k);
+
+                    float res = 0.0, dr;
+                    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                    {
+                        float f = note->frequency * (fqid + 1);
+                        float fv = freq[fqid];
+                        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                        res += fv*v*dr;
+                    }
+                    return res;
+            """.replace(" " * 12, "")))
+            self.configs.kernel.tools.append(SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), "Test2", "test3.mp3", 2.0, L=16, distortion=None))
+
+            self.configs.kernel.tools[0].configs.legato_mod = 2.0
+            self.configs.kernel.tools[0].configs.volume = 1.0
+            self.configs.kernel.tools[1].configs.legato_mod = 2.0
+            self.configs.kernel.tools[1].configs.volume = 1.0
+
+            tact(0)
+            add(0.0, 440.0, 32.0, 1.0, 0)
+            add(0.0, 440.0, 32.0, 1.0, 1)
+
+
+        if what == 'test':
+            test()
+        elif what == 't':
             tact()
             lm = 1.25
+            self.configs.kernel.tools[0].configs.legato_mod = 1.25
+            self.configs.kernel.tools[1].configs.legato_mod = 1.25
             tsoy()
         elif what == 'm':
             tact()
             lm = 2.0
+            self.configs.kernel.tools[0].configs.legato_mod = 2.0
+            self.configs.kernel.tools[1].configs.legato_mod = 2.0
             metal1()
         elif what == 'r':
             tact()
             lm = 4.0
+            self.configs.kernel.tools[0].configs.legato_mod = 4.0
+            self.configs.kernel.tools[1].configs.legato_mod = 4.0
+            self.configs.kernel.tools[0].configs.volume = 0.3
+            self.configs.kernel.tools[1].configs.volume = 0.3
             river()
         else: # 'w'
-            whispers()
+            whispers(0)
 
         return
 
@@ -2514,12 +2651,36 @@ class SynthesizerProject:
                 return res;
         """.replace(" "*12,"")))
         self.configs.kernel.tools.append(SynthesizerTool(name="PianoBass", code="""
-            float dr;
-            //float v = note->volume, k = 1.0f - (float)(s - note->start) / 44100.0f;//(float)(note->end - note->start);
-            float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-            v *= fmax(0.01f, k);
-            dr = sin(s * note->frequency / 44100.0f * 0.5 * 3.1415926 * 2.0);
-            return v*(smoothstep(-0.3, 0.3, dr)*2.0-1.0);
+                float freq[] = {
+                    0.5,
+                    0.6,
+                    0.05,
+                    0.7,
+                    0.05,
+                    0.25,
+                    0.15,
+                    0.8,
+                    0.015,
+                    0.005,
+                    0.015,
+                    0.1,
+                    0.015,
+                    0.005,
+                    0.015,
+                    0.6,
+                };
+                float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+                v *= fmax(0.01f, k);
+                
+                float res = 0.0, dr;
+                for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+                {
+                    float f = note->frequency * (fqid + 1) * 0.125;
+                    float fv = freq[fqid];
+                    dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+                    res += fv*v*dr;
+                }
+                return res;
         """.replace(" "*8,"")))
         self.configs.kernel.tools.append(SynthesizerTool(name="Drum", code="""
             float dr;
@@ -2532,10 +2693,10 @@ class SynthesizerProject:
 
         # INIT?
 
-        tt = choice('rtm')
-        self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
-        self.configs.kernel.tools[1].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0}[tt]
-        self.create(tt,dt=0.25*1.5)
+        tt = choice('rtmw')
+        self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0, 'w': None}[tt]
+        self.configs.kernel.tools[1].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0, 'w': None}[tt]
+        self.create(tt,dt=0.25*1.5) #  * 0.5 for 2x speed
         self.log("created music: " + tt, c.log.info)
 
         while True:
