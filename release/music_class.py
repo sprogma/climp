@@ -3,6 +3,7 @@ import librosa
 import mutagen.mp3
 import pygame
 import os
+import copy
 import math
 import numpy as np
 from mutagen.id3 import ID3, TIT2, TALB, TPE1, TCON, APIC
@@ -26,12 +27,23 @@ class jsd(dict):
         else:
             super(jsd, self).__init__(*args)
 
+    def __deepcopy__(self, memodict={}):
+        return jsd_recurse(copy.deepcopy(dict(self),memo=memodict))
+
     def __getattr__(self, name):
         return self[name]
 
     def __setattr__(self, name, value):
         self[name] = value
         return self
+
+
+def jsd_recurse(d):
+    a = jsd(d)
+    for i in a.keys():
+        if isinstance(a[i], dict):
+            a[i] = jsd_recurse(a[i])
+    return a
 
 
 class Music:

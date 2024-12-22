@@ -35,6 +35,7 @@ global_executor_hash = 0
 
 EVENT_MUSIC_END = music_class.EVENT_MUSIC_END
 jsd = music_class.jsd
+jsd_recurse = music_class.jsd_recurse
 Music = music_class.Music
 MutableMusic = music_class.MutableMusic
 Album = music_class.Album
@@ -60,6 +61,7 @@ def lib_linkage():
     music_gen.rsc = rsc
     music_gen.log = log
     music_gen.jsd = jsd
+    music_gen.jsd_recurse = jsd_recurse
 
 
 def log(t, string):

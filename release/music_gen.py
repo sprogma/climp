@@ -4,6 +4,7 @@ import shlex
 import json
 import string as literals
 import os
+import sys
 import random
 import re
 import pathlib
@@ -11,6 +12,8 @@ import numpy
 import pygame
 import time
 import math
+import copy
+import bz2
 import datetime
 import numpy as np
 from random import randint, choice
@@ -48,20 +51,6 @@ def name_by_temp_bps(bps):
             "presto" if 188 <= bps <= 200 else
             "prestissimo")
 
-class jsd(dict):
-    def __init__(self, *args, **items):
-        if items and not args:
-            super(jsd, self).__init__(items)
-        else:
-            super(jsd, self).__init__(*args)
-
-    def __getattr__(self, name):
-        return self[name]
-
-    def __setattr__(self, name, value):
-        self[name] = value
-        return self
-
 class GeneratorTone:
     def __init__(self, tool, time, length, volume, frequency):
         self.tool = tool
@@ -78,6 +67,11 @@ class Generator:
 
     def add(self, item):
         self.inputs.append(item)
+
+    def adjust_start_time(self, start_time):
+        self.inputs = list(filter(lambda x: x.time + 0.0001 >= start_time, self.inputs))
+        for i in self.inputs:
+            i.time -= start_time
 
     def compile(self):
         # sort data
@@ -127,16 +121,46 @@ class SynthesizerProjectNote:
 class SynthesizerProjectTact:
     def __init__(self, time, tools_count):
         self.time = time
-        self.notes: [[SynthesizerProjectNote]] = [[] for i in range(tools_count)]
+        self.notes: [[SynthesizerProjectNote]] = [[None] for i in range(tools_count)]
         # len(notes[i]) should be similar for all i
 
     def insert_column(self, column_id):
         for i in self.notes:
             i.insert(column_id, None)
 
+    def delete_column(self, column_id):
+        for i in self.notes:
+            i.pop(column_id)
+
+    def to_string(self):
+        d = {
+            "time": self.time,
+            "notes": list(map(lambda x: " ".join(map(lambda y: "" if y is None else y.text, x)),self.notes)),
+        }
+        return json.dumps(d)
+
+    @staticmethod
+    def from_string(s, tools_count):
+        d = json.loads(s)
+        x = SynthesizerProjectTact(d["time"], tools_count)
+        for i in range(tools_count):
+            x.notes[i].clear() # remove 'Nones'
+        for k, i in enumerate(d["notes"]):
+            for ii in i.split(" "):
+                if ii == "":
+                    x.notes[k].append(None)
+                else:
+                    x.notes[k].append(SynthesizerProjectNote(ii))
+        # repair broken notes
+        l = max(map(len, x.notes))
+        for i in x.notes:
+            while len(i) < l:
+                i.append(None)
+        return x
+
     @property
     def length(self):
-        return len(notes[0]) + 2   # 2 - fictive notes for length
+        return len(self.notes[0])
 
 
 class SynthesizerTool:
@@ -327,6 +351,107 @@ class SynthesizerProject:
         while len(self.d.log) > self.hl - 1:
             self.d.log.pop(0)
 
+    def get_input(self, validate, required=False, info_string="", start_string=""):
+        s = start_string
+        waiting = True
+        sc.hline(self.h // 2 - 1, 0, '-', self.w)
+        if required:
+            st = f"{info_string} [required]"
+            addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
+        else:
+            st = f"{info_string}"
+            addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
+        sc.hline(self.h // 2, 0, ' ', self.w)
+        sc.hline(self.h // 2 + 1, 0, '-', self.w)
+        while waiting:
+            # draw state
+            sc.hline(self.h // 2, 0, ' ', self.w)
+            no_error = True
+            try:
+                res = validate(s)
+            except Exception as e:
+                no_error = False
+                res = str(e)
+            res = f"{s} -> {res}"[:self.w]
+            addstr(self.h // 2, self.w // 2 - len(res) // 2, res, c.base)
+            sc.chgat(self.h // 2, self.w // 2 - len(res) // 2 + min(len(s), self.w) - 1, 1, curses.color_pair(c.path.unfocus))
+            sc.refresh()
+            # read key press
+            while True:
+                key = sc.getch()
+                if key == -1:
+                    break
+                elif key == curses.KEY_RESIZE:
+                    curses.resize_term(*sc.getmaxyx())
+                    sc.clear()
+                    sc.refresh()
+                elif key == 27:
+                    if not required:
+                        return None
+                elif key == 8:  # backspace
+                    s = s[:-1]
+                elif key == 10:  # confirm
+                    if no_error:
+                        waiting = False
+                        break
+                elif chr(key) in string.printable:
+                    s += chr(key)
+        try:
+            return validate(s)
+        except Exception as e:
+            return None
+
+    def redo(self):
+        if self.d.redo.arr:
+            self.d.visual.selection, self.tacts = self.d.redo.arr[-1]
+            self.d.visual.selection = jsd(self.d.visual.selection)
+            self.d.redo.arr.pop(len(self.d.redo.arr)-1)
+
+    def save_action(self):
+        self.d.redo.arr.append((
+            copy.deepcopy(self.d.visual.selection),
+            copy.deepcopy(self.tacts)
+        ))
+        while len(self.d.redo.arr) > self.d.redo.length:
+            self.d.redo.arr.pop(0)
+
+    def save(self, filename):
+        self.d.last_save_file = filename
+        d = {
+            "tools": [],
+            "tacts": [],
+            "configs": copy.deepcopy(self.configs)
+        }
+        # save configs
+        d["configs"]["kernel"]["tools"] = None # tools save not here
+        # save tools
+        for tool in self.configs.kernel.tools:
+            d["tools"].append(tool.to_string())
+        # save tacts
+        for tact in self.tacts:
+            d["tacts"].append(tact.to_string())
+        with open("tmp/save", "w") as file:
+            json.dump(d, file)
+        with open("tmp/save", mode="rb") as fin, bz2.open(filename, "wb", compresslevel=9) as fout:
+            fout.write(fin.read())
+
+    def load(self, filename):
+        with bz2.open(filename, "rb") as fout:
+            d = json.load(fout)
+        # load configs
+        self.configs = jsd_recurse(d["configs"])
+        # load tools
+        self.configs.kernel.tools = []
+        for tool_string in d["tools"]:
+            self.configs.kernel.tools.append(SynthesizerTool.from_string(tool_string))
+        # load tacts
+        self.tacts = []
+        for tact_string in d["tacts"]:
+            self.tacts.append(SynthesizerProjectTact.from_string(tact_string, len(self.configs.kernel.tools)))
+        self.init_d()
+        self.d.last_save_file = filename
+
+
     def draw_tacts(self):
         line_height = 1+len(self.configs.kernel.tools)*2
         line_width_shift = 5
@@ -337,21 +462,39 @@ class SynthesizerProject:
         x, y = 0, -self.d.visual.cy
         for tact_id, i in enumerate(self.tacts):
             px, py = x, y
-            for notes in zip(*i.notes):
+            for note_column, notes in enumerate(zip(*i.notes)):
                 l = max(map(lambda i: 0 if i is None else len(i.text) - (1 if i.text and i.text[0] == '-' else 0), notes)) + 2
-                for pos, note in enumerate(notes):
-                    if note is not None:
-                        is_playing = False
-                        if note.meta is not None:
-                            is_playing = self.d.music.draw_time > note.meta.time and (self.d.music.draw_time - note.meta.time) < note.meta.length
-                        if y + pos < self.ht:
-                            color = c.gen.note.playing if is_playing else (c.gen.note.selected if tact_id == self.d.visual.selection.pos else c.gen.note.base)
-                            addstr(y+pos, x + line_width_shift + (0 if note.text and note.text[0] == '-' else 1), note.text, color)
-                # next notes
-                x += l
-                if x > line_width:
+                if x + l >= line_width:
                     y += line_height
                     x = 0
+                for pos, note in enumerate(notes):
+                    is_playing = False
+                    if note is not None and note.meta is not None:
+                        is_playing = self.d.music.draw_time > note.meta.time and (self.d.music.draw_time - note.meta.time) < note.meta.length
+                    if y + pos < self.ht:
+                        color = c.gen.note.base
+                        if is_playing:
+                            color = c.gen.note.playing
+                        elif self.d.visual.selection.pos is not None:
+                            a, b = self.d.visual.selection.pos, self.d.visual.selection.end_pos
+                            if b is None:
+                                b = a
+                            if min(a, b) <= tact_id <= max(a, b):
+                                if note_column == self.d.visual.selection.column and pos == self.d.visual.selection.tool:
+                                    color = c.gen.note.selected
+                                elif self.d.visual.selection.column is None or self.d.visual.selection.column is None:
+                                    color = c.gen.note.selected
+                                else:
+                                    color = c.log.info
+                        if note is not None:
+                            sh = (0 if note.text and note.text[0] == '-' else 1)
+                            s = f"{note.text:{l}}"
+                        else:
+                            sh = 1
+                            s = " " * l
+                        addstr(y+pos, x + line_width_shift + sh, s, color)
+                # next notes
+                x += l
 
             # collect meta information
             min_y, max_y = math.inf, -math.inf
@@ -394,6 +537,13 @@ class SynthesizerProject:
                         self.d.visual.cy = sel_y - self.ht // 3
                     if self.d.visual.cy > sel_y - self.ht * 1 // 9:
                         self.d.visual.cy = sel_y - self.ht // 3
+        elif self.d.mode == "insert":
+            if self.d.visual.selection.recalculate_cy and sel_y != math.inf:
+                self.d.visual.selection.recalculate_cy = False
+                if self.d.visual.cy < sel_y - self.ht * 2 // 3:
+                    self.d.visual.cy = sel_y - self.ht // 3
+                if self.d.visual.cy > sel_y - self.ht * 1 // 9:
+                    self.d.visual.cy = sel_y - self.ht // 3
 
         # draw line
         sc.hline(self.ht, 0, '-', self.w)
@@ -423,41 +573,67 @@ class SynthesizerProject:
                 sc.refresh()
             elif key == 27:
                 return False
+            elif key == ord(curses.ascii.ctrl('s')):
+                def path_string_save(x):
+                    if not os.path.exists(os.path.dirname(x)):
+                        raise Exception(f"Path <{os.path.dirname(x)}> not exists")
+                    return os.path.normpath(x)
+                s = "" if self.d.last_save_file is None else self.d.last_save_file
+                filename = self.get_input(path_string_save, info_string="enter file to save", start_string=s)
+                if filename is not None:
+                    self.save(filename)
+            elif key == ord(curses.ascii.ctrl('l')):
+                def path_string_load(x):
+                    if not os.path.exists(x):
+                        raise Exception(f"Path <{x}> not exists")
+                    return os.path.normpath(x)
+                s = "" if self.d.last_save_file is None else self.d.last_save_file
+                filename = self.get_input(path_string_load, info_string="enter file to load", start_string=s)
+                if filename is not None:
+                    self.load(filename)
             elif self.d.mode == 'view':
                 self.events_view(key)
             elif self.d.mode == 'insert':
                 self.events_insert(key)
 
     def events_view(self, key):
+        self.d.visual.selection.end_pos = None
         if key == curses.KEY_UP:
             self.d.visual.follow_music = False
             self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.cy -= 1
-        if key == curses.KEY_DOWN:
+        elif key == curses.KEY_DOWN:
             self.d.visual.follow_music = False
             self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.cy += 1
-        if key == curses.KEY_RIGHT:
+        elif key == curses.KEY_RIGHT:
             self.d.visual.follow_music = False
             self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.column = None
+            self.d.visual.selection.tool = None
             if self.d.visual.selection.pos is None:
                 self.d.visual.selection.pos = 0
             else:
                 self.d.visual.selection.pos = min(self.d.visual.selection.pos + 1, len(self.tacts) - 1)
-        if key == curses.KEY_LEFT:
+        elif key == curses.KEY_LEFT:
             self.d.visual.follow_music = False
             self.d.visual.last_action_time = pygame.time.get_ticks()
             self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.column = None
+            self.d.visual.selection.tool = None
             if self.d.visual.selection.pos is None:
                 self.d.visual.selection.pos = 0
             else:
                 self.d.visual.selection.pos = max(self.d.visual.selection.pos - 1, 0)
-        if key in (ord('i'), ord('I')):
-            return self.enable_view_to_insert()
-        if key in (ord('c'), ord('C')):
-            self.compile()
-        if key in (ord('p'), ord('P')):
+        elif key in (ord('i'), ord('I')):
+            self.d.mode = "insert"
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.column = 0
+                self.d.visual.selection.tool = 0
+        elif key in (ord('c'), ord('C')):
+            self.compile(0.0)
+        elif key in (ord('p'), ord('P')):
             self.d.music.playing = not self.d.music.playing
             if self.d.music.playing:
                 if self.d.music.track is None:
@@ -468,18 +644,224 @@ class SynthesizerProject:
                     self.d.music.track.play()
             else:
                 self.d.music.track.stop()
-        if key in (ord('t'), ord('T')):
+        elif key in (ord('t'), ord('T')):
             self.tool_panel()
 
     def events_insert(self, key):
-        if key == curses.KEY_LEFT:
-            ...
+        if key == curses.KEY_RIGHT:
+            self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.end_pos = None
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            if self.d.visual.selection.column is None:
+                self.d.visual.selection.column = 0
+            if self.d.visual.selection.tool is None:
+                self.d.visual.selection.tool = 0
 
-    def enable_view_to_insert(self):
-        ...
+            self.d.visual.selection.column += 1
+            if self.d.visual.selection.column >= self.tacts[self.d.visual.selection.pos].length:
+                if self.d.visual.selection.pos + 1 < len(self.tacts):
+                    self.d.visual.selection.pos += 1
+                    self.d.visual.selection.column = 0
+                else:
+                    self.d.visual.selection.column -= 1 # restore
+        elif key == curses.KEY_LEFT:
+            self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.end_pos = None
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            if self.d.visual.selection.column is None:
+                self.d.visual.selection.column = 0
+            if self.d.visual.selection.tool is None:
+                self.d.visual.selection.tool = 0
 
-    def enable_insert_to_view(self):
-        ...
+            self.d.visual.selection.column -= 1
+            if self.d.visual.selection.column < 0:
+                if self.d.visual.selection.pos - 1 >= 0:
+                    self.d.visual.selection.pos -= 1
+                    self.d.visual.selection.column = self.tacts[self.d.visual.selection.pos].length - 1
+                else:
+                    self.d.visual.selection.column += 1 # restore
+        elif key == 400: # right + shift
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.recalculate_cy = True
+                if self.d.visual.selection.end_pos is None:
+                    self.d.visual.selection.end_pos = self.d.visual.selection.pos
+                self.d.visual.selection.end_pos = min(self.d.visual.selection.end_pos + 1, len(self.tacts)-1)
+                self.d.visual.selection.column = None
+                self.d.visual.selection.tool = None
+        elif key == 391: # left + shift
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.recalculate_cy = True
+                if self.d.visual.selection.end_pos is None:
+                    self.d.visual.selection.end_pos = self.d.visual.selection.pos
+                self.d.visual.selection.end_pos = max(self.d.visual.selection.end_pos-1, 0)
+                self.d.visual.selection.column = None
+                self.d.visual.selection.tool = None
+        elif key == 444: # right + ctrl
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.recalculate_cy = True
+                self.save_action()
+                if self.d.visual.selection.end_pos is None:
+                    self.d.visual.selection.end_pos = self.d.visual.selection.pos
+                self.d.visual.selection.column = None
+                self.d.visual.selection.tool = None
+                a, b = self.d.visual.selection.pos, self.d.visual.selection.end_pos
+                a, b = min(a, b), max(a, b)
+                if b + 1 < len(self.tacts):
+                    self.tacts.insert(a, self.tacts.pop(b + 1))
+                    self.d.visual.selection.pos += 1
+                    self.d.visual.selection.end_pos += 1
+        elif key == 443: # left + ctrl
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.recalculate_cy = True
+                self.save_action()
+                if self.d.visual.selection.end_pos is None:
+                    self.d.visual.selection.end_pos = self.d.visual.selection.pos
+                self.d.visual.selection.column = None
+                self.d.visual.selection.tool = None
+                a, b = self.d.visual.selection.pos, self.d.visual.selection.end_pos
+                a, b = min(a, b), max(a, b)
+                if a - 1 >= 0:
+                    self.tacts.insert(b, self.tacts.pop(a - 1))  # b  not  b + 1 becoude a < b
+                    self.d.visual.selection.pos -= 1
+                    self.d.visual.selection.end_pos -= 1
+        elif key == curses.KEY_UP:
+            self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.end_pos = None
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            if self.d.visual.selection.column is None:
+                self.d.visual.selection.column = 0
+            if self.d.visual.selection.tool is None:
+                self.d.visual.selection.tool = 0
+            self.d.visual.selection.tool -= 1
+            if self.d.visual.selection.tool < 0:
+                self.d.visual.selection.tool = 0
+        elif key == curses.KEY_DOWN:
+            self.d.visual.selection.recalculate_cy = True
+            self.d.visual.selection.end_pos = None
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            if self.d.visual.selection.column is None:
+                self.d.visual.selection.column = 0
+            if self.d.visual.selection.tool is None:
+                self.d.visual.selection.tool = 0
+            self.d.visual.selection.tool += 1
+            if self.d.visual.selection.tool >= len(self.configs.kernel.tools):
+                self.d.visual.selection.tool = len(self.configs.kernel.tools) - 1
+        elif key in (ord('`'), ord('`')):
+            self.d.mode = "view"
+        elif key == 8:  # backspace
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                if self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] is not None:
+                    s = self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text
+                    self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text = s[:-1]
+                    if not self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text.strip():
+                        self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] = None
+        elif key == 127:  # ctrl+backspace: remove all text
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] = None
+        elif key == 10:  # return key
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                s = ""
+                if self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] is not None:
+                    s = self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text
+                res = self.get_input(lambda x: x.strip(), False, "edit note", start_string=s)
+                if res is not None:
+                    if self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] is None:
+                        self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] = SynthesizerProjectNote(res)
+                    else:
+                        self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text = res
+        elif key == ord('\t'): # tab: insert column, if in end, insert tact
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                if self.d.visual.selection.column >= self.tacts[self.d.visual.selection.pos].length - 1: # new tact
+                    self.tacts.insert(self.d.visual.selection.pos+1, SynthesizerProjectTact(0.0, len(self.configs.kernel.tools)))
+                    self.d.visual.selection.pos += 1
+                    self.d.visual.selection.column = 0
+                else: # insert column
+                    self.tacts[self.d.visual.selection.pos].insert_column(self.d.visual.selection.column)
+        elif key == 330: # delete key: delete column
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                self.save_action()
+                if self.d.visual.selection.column > 0:
+                    self.tacts[self.d.visual.selection.pos].delete_column(self.d.visual.selection.column)
+                    self.d.visual.selection.column -= 1
+                else:
+                    if self.tacts[self.d.visual.selection.pos].length > 1:
+                        self.tacts[self.d.visual.selection.pos].delete_column(self.d.visual.selection.column)
+                    else:
+                        self.tacts.pop(self.d.visual.selection.pos)
+                        if not self.tacts:
+                            self.tacts = [SynthesizerProjectTact(0.0, len(self.configs.kernel.tools))]
+                        self.d.visual.selection.pos = max(self.d.visual.selection.pos - 1, 0)
+                        self.d.visual.selection.column = self.tacts[self.d.visual.selection.pos].length-1
+        elif key == ord(' '): # next cell, if not exists, create
+            self.d.visual.selection.recalculate_cy = True
+            if self.d.visual.selection.pos is None:
+                self.d.visual.selection.pos = 0
+            if self.d.visual.selection.column is None:
+                self.d.visual.selection.column = 0
+            if self.d.visual.selection.tool is None:
+                self.d.visual.selection.tool = 0
+
+            self.d.visual.selection.column += 1
+            if self.d.visual.selection.column >= self.tacts[self.d.visual.selection.pos].length:
+                self.save_action()
+                self.tacts[self.d.visual.selection.pos].insert_column(self.tacts[self.d.visual.selection.pos].length)
+        elif key == ord(curses.ascii.ctrl('d')): # dublicate tact
+            if self.d.visual.selection.pos is not None:
+                self.d.visual.selection.recalculate_cy = True
+                self.save_action()
+                a, b = self.d.visual.selection.pos, self.d.visual.selection.end_pos
+                if b is None:
+                    b = a
+                for t in range(max(a, b), min(a, b)-1,-1):
+                    self.tacts.insert(b+1, copy.deepcopy(self.tacts[t]))
+        elif key == ord(curses.ascii.ctrl('z')):
+            self.d.visual.selection.recalculate_cy = True
+            self.redo()
+        elif key == ord(curses.ascii.ctrl('t')):
+            self.d.visual.selection.recalculate_cy = True
+            if self.d.music.playing:
+                self.d.music.track.stop()
+            compilation_time = self.d.visual.selection.pos * self.configs.tact_size * 60.0 / self.configs.bps
+            compilation_time -= 8.0
+            self.d.music.track = None
+            self.compile(compilation_time)
+            self.d.music.playing = True
+            if self.d.music.track is None: # strange position...
+                self.log("Trak is not compiled yet [press 'c' in view mode to compile]", c.log.info)
+                self.d.music.playing = False
+            else:
+                self.d.music.time_start = pygame.time.get_ticks() - 1000 * compilation_time
+                self.d.music.track.play()
+        elif chr(key) in string.printable:
+            if (self.d.visual.selection.pos is not None
+                        and self.d.visual.selection.column is not None
+                        and self.d.visual.selection.tool is not None):
+                self.d.visual.selection.recalculate_cy = True
+                if self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] is None:
+                    self.save_action()
+                    self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column] = SynthesizerProjectNote(chr(key))
+                else:
+                    self.save_action()
+                    self.tacts[self.d.visual.selection.pos].notes[self.d.visual.selection.tool][self.d.visual.selection.column].text += chr(key)
 
     def tool_panel(self):
         # LONG FUNCTION :)
@@ -529,9 +911,9 @@ class SynthesizerProject:
             # request for filename
             def path_string(x):
                 if not os.path.exists(os.path.dirname(x)):
-                    raise Exception(f"Path <{os.path.basename(x)}> not exists")
+                    raise Exception(f"Path <{os.path.dirname(x)}> not exists")
                 return x
-            p = get_input(path_string, info_string="Enter path to file (for export into)")
+            p = self.get_input(path_string, info_string="Enter path to file (for export into)")
             if p is None:
                 return
             # to save
@@ -539,7 +921,7 @@ class SynthesizerProject:
             with open(p, "w") as file:
                 file.write(s)
         def rename_tool(x):
-            s = get_input(name_request_string, info_string="Enter name of tool, another tool's name to copy, <del> to delete")
+            s = self.get_input(name_request_string, info_string="Enter name of tool, another tool's name to copy, <del> to delete")
             if s is None:
                 return None
             if s.startswith("new name:"):
@@ -564,14 +946,13 @@ class SynthesizerProject:
                                 t.notes.pop(i)
                 except Exception as e:
                     ...
+        def update_tacts_after_new_tool():
+            for t in self.tacts:
+                t.notes.append([None] * t.length)
         def swap_tools(tid1, tid2):
             self.configs.kernel.tools[tid1], self.configs.kernel.tools[tid2] = self.configs.kernel.tools[tid2], self.configs.kernel.tools[tid1]
             for t in self.tacts:
-                for note in t.notes:
-                    if note.tool == tid2:
-                        note.tool = tid1
-                    elif note.tool == tid1:
-                        note.tool = tid2
+                t.notes[tid2], t.notes[tid1] = t.notes[tid1], t.notes[tid2]
         def name_request_string(x):
             x = x.strip().replace(" ", "_")
             if not x.strip():
@@ -612,60 +993,11 @@ class SynthesizerProject:
             "name": lambda x: rename_tool(x),
             "code": lambda x: moditify_code(x),
             "mute": lambda x: setattr(x.configs, 'mute', not x.configs.mute),
-            "volume": lambda x: setattr(x.configs, "volume", f) if (f := get_input(in_float_01, info_string="Enter volume of tool")) is not None else None,
-            "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := get_input(in_float_positive, info_string="Enter legato mod of tool")) is not None else None,
+            "volume": lambda x: setattr(x.configs, "volume", f) if (f := self.get_input(in_float_01, info_string="Enter volume of tool")) is not None else None,
+            "legato_mod": lambda x: setattr(x.configs, "legato_mod", f) if (f := self.get_input(in_float_positive, info_string="Enter legato mod of tool")) is not None else None,
             "use stereo": lambda x: setattr(x.configs, 'stereo', not x.configs.stereo),
             "export": lambda x: save_tool(x),
         }
-        def get_input(validate, required=False, info_string=""):
-            s = ""
-            waiting = True
-            sc.hline(self.h // 2 - 1, 0, '-', self.w)
-            if required:
-                st = f"{info_string} [required]"
-                addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
-            else:
-                st = f"{info_string}"
-                addstr(self.h // 2 - 1, self.w // 2 - len(st) // 2, st, c.path.unfocus)
-            sc.hline(self.h // 2, 0, ' ', self.w)
-            sc.hline(self.h // 2 + 1, 0, '-', self.w)
-            while waiting:
-                # draw state
-                sc.hline(self.h // 2, 0, ' ', self.w)
-                no_error = True
-                try:
-                    res = validate(s)
-                except Exception as e:
-                    no_error = False
-                    res = str(e)
-                res = f"{s} -> {res}"[:self.w]
-                addstr(self.h // 2, self.w // 2 - len(res) // 2, res, c.base)
-                sc.chgat(self.h // 2, self.w // 2 - len(res) // 2 + min(len(s), self.w) - 1, 1, curses.color_pair(c.path.unfocus))
-                sc.refresh()
-                # read key press
-                while True:
-                    key = sc.getch()
-                    if key == -1:
-                        break
-                    elif key == curses.KEY_RESIZE:
-                        curses.resize_term(*sc.getmaxyx())
-                        sc.clear()
-                        sc.refresh()
-                    elif key == 27:
-                        if not required:
-                            return None
-                    elif key == 8: # backspace
-                        s = s[:-1]
-                    elif key == 10: # confirm
-                        if no_error:
-                            waiting = False
-                            break
-                    elif chr(key) in string.printable:
-                        s += chr(key)
-            try:
-                return validate(s)
-            except Exception as e:
-                return None
         def new_tool():
             # select - Load or new
             sel = 0
@@ -714,18 +1046,19 @@ class SynthesizerProject:
                     dr = sin(s * note->frequency / 44100.0f * 3.1415926);
                     return v*dr;
                 """.replace("            ", "")
-                name = get_input(new_name_string, required=False, info_string="Enter name of tool")
+                name = self.get_input(new_name_string, required=False, info_string="Enter name of tool")
                 if name is None:
                     return
                 code = f"\n    /*Enter code here to generate sample 's' from note 'note' (rnd is white noise from -1 to 1)*/{base_of_code}"
                 t = SynthesizerTool(name, code)
                 self.configs.kernel.tools.append(t)
+                update_tacts_after_new_tool()
             elif sel == 1:
                 def path_string(x):
                     if not os.path.exists(x):
                         raise Exception(f"Path <{x}> not exists")
                     return x
-                filename = get_input(path_string, info_string="Enter path to file (to load from)")
+                filename = self.get_input(path_string, info_string="Enter path to file (to load from)")
                 if filename is None:
                     return
                 try:
@@ -733,6 +1066,7 @@ class SynthesizerProject:
                         s = file.read()
                     t = SynthesizerTool.from_string(s)
                     self.configs.kernel.tools.append(t)
+                    update_tacts_after_new_tool()
                 except Exception as e:
                     self.log(str(e),c.base)
                     return
@@ -741,15 +1075,16 @@ class SynthesizerProject:
                     if not os.path.exists(x):
                         raise Exception(f"Path <{x}> not exists")
                     return x
-                name = get_input(new_name_string, info_string="Enter name of tool")
+                name = self.get_input(new_name_string, info_string="Enter name of tool")
                 if name is None:
                     return
-                filename = get_input(path_string, info_string="Enter path to music (mp3/wav/ogg/etc) file (to create from)")
+                filename = self.get_input(path_string, info_string="Enter path to music (mp3/wav/ogg/etc) file (to create from)")
                 if filename is None:
                     return
                 try:
                     t = SynthesizerTool.from_wave(lambda x: self.log(x, c.log.info), name, filename)
                     self.configs.kernel.tools.append(t)
+                    update_tacts_after_new_tool()
                 except Exception as e:
                     self.log(str(e),c.base)
                     return
@@ -2462,16 +2797,10 @@ class SynthesizerProject:
                 self.configs.kernel.tools[5].configs.volume = 0.4
 
 
-            def tone2(x):
-                if x == "F":
-                    return "F#"
-                if x == "C":
-                    return "C#"
-                return x
-            self.configs.tone_pitch = tone2
+            self.configs.tone_pitch = {"F":"F#","C":"C#"}
             self.configs.tact_size = 4
             self.configs.tact_split = 4
-            self.configs.bps = 192 # 168-200
+            self.configs.bps = 192 # 192
 
             def mytact(s):
                 t = 0.0
@@ -2502,7 +2831,7 @@ class SynthesizerProject:
                             self.tacts[-1].notes[num][cnt[num]] = SynthesizerProjectNote(note)
                             cnt[num] += 1
 
-            with open("track/whispers", "r") as f:
+            with open("track/whispers.txt", "r") as f:
                 txt = f.read()
             mytact(txt)
 
@@ -2544,8 +2873,7 @@ class SynthesizerProject:
             self.tacts[-1].notes[0][0] = SynthesizerProjectNote("A3/16")
             self.tacts[-1].notes[1][0] = SynthesizerProjectNote("A3/16")
 
-
-        what = 'w'
+        what = choice(('test', 'w'))
         if what == 'test':
             test()
         elif what == 't':
@@ -2583,59 +2911,73 @@ class SynthesizerProject:
         r = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
         # start time
         t = 0.0
+        # remove empty notes
+        for i in self.tacts:
+            for n in i.notes:
+                for ii in range(len(n)):
+                    if n[ii] is not None and not n[ii].text.strip():
+                        n[ii] = None
         # for all notes:
-
         vapp = [1.0] * len(self.configs.kernel.tools)
-        for tact in self.tacts:
-            for tool, notes in enumerate(tact.notes):
-                if not self.configs.kernel.tools[tool].configs.mute:
-                    # add all notes
-                    prev_len, prev_volume = 1.0, 1.0
-                    tt = t
-                    for note in filter(lambda x: x is not None, notes):
-                        # get instrument id [tool]
-                        content = note.text
-                        vv = vapp[tool]
-                        if content[-1] == '*':
-                            vv *= 1.5
-                            content = content[:-1]
-                        elif content[-1] == 'v':
-                            vv *= 0.5
-                            content = content[:-1]
-                        if content[0] == '-':
-                            tt -= prev_len
-                            content = content[1:]
-                        # parse content
-                        a = content.split('/')
-                        f, l, v = "A", prev_len, prev_volume
-                        if len(a) >= 1:
-                            f = a[0]
-                        if len(a) >= 2 and a[1]:
-                            l = eval(a[1].replace(":", "/"))
-                        if len(a) >= 3 and a[2]:
-                            tt = t + eval(a[2].replace(":", "/"))
-                        if len(a) >= 4 and a[3]:
-                            v = eval(a[3].replace(":", "/"))
-                        # calculate frequency
-                        k = 0
-                        while k < len(f) and f[k].isalpha():
-                            k += 1
-                        nt = f[:k]
-                        nt = tone_pitch(nt)
-                        nt = r.index(nt)
-                        z = int(f[k:]) - 4
-                        fq = 523.25 * pow(2, z + nt / 12)
+        for tact_id, tact in enumerate(self.tacts):
+            try:
+                for tool, notes in enumerate(tact.notes):
+                    if not self.configs.kernel.tools[tool].configs.mute:
+                        # add all notes
+                        prev_len, prev_volume = 1.0, 1.0
+                        tt = t
+                        for note in filter(lambda x: x is not None and x.text.strip(), notes):
+                            # get instrument id [tool]
+                            content = note.text
+                            vv = vapp[tool]
+                            if content[-1] == '*':
+                                vv *= 1.5
+                                content = content[:-1]
+                            elif content[-1] == 'v':
+                                vv *= 0.5
+                                content = content[:-1]
+                            if content[0] == '-':
+                                tt -= prev_len
+                                content = content[1:]
+                            # parse content
+                            a = content.split('/')
+                            f, l, v = "A", prev_len, prev_volume
+                            if len(a) >= 1:
+                                f = a[0]
+                            if len(a) >= 2 and a[1]:
+                                l = eval(a[1].replace(":", "/"))
+                            if len(a) >= 3 and a[2]:
+                                tt = t + eval(a[2].replace(":", "/"))
+                            if len(a) >= 4 and a[3]:
+                                v = eval(a[3].replace(":", "/"))
+                            # calculate frequency
+                            k = 0
+                            while k < len(f) and f[k].isalpha():
+                                k += 1
+                            nt = f[:k]
+                            nt = tone_pitch.get(nt, nt)
+                            nt = r.index(nt)
+                            z = int(f[k:]) - 4
+                            fq = 523.25 * pow(2, z + nt / 12)
 
-                        volume_pitch = self.configs.kernel.tools[tool].configs.volume
-                        legato_mod = self.configs.kernel.tools[tool].configs.legato_mod
-                        self.x.add(GeneratorTone(tool, tt * tempo_multipler, l * legato_mod * tempo_multipler, v * vv * volume_pitch, fq))
-                        # add note's meta
-                        note.meta = jsd(time = tt * tempo_multipler, length = l * tempo_multipler)
-                        prev_len, prev_volume = l, v
-                        tt += l
+                            volume_pitch = self.configs.kernel.tools[tool].configs.volume
+                            legato_mod = self.configs.kernel.tools[tool].configs.legato_mod
+                            self.x.add(GeneratorTone(tool, tt * tempo_multipler, l * legato_mod * tempo_multipler, v * vv * volume_pitch, fq))
+                            # add note's meta
+                            note.meta = jsd(time = tt * tempo_multipler, length = l * tempo_multipler)
+                            prev_len, prev_volume = l, v
+                            tt += l
+            except Exception as e:
+                self.log(f"Error: {e}", c.log.error)
+                self.d.visual.selection.pos = tact_id
+                self.d.visual.selection.column = None
+                self.d.visual.selection.tool = None
+                self.d.visual.recalculate_cy = True
+                return False
             t += tact_size * tact_split
+        return True
 
-    def compile(self):
+    def compile(self, compilation_start_time=0.0):
         if self.d.music.track is not None:
             self.d.music.playing = False
             self.d.music.track.stop()
@@ -2647,10 +2989,16 @@ class SynthesizerProject:
         # generate tones
 
         self.x.inputs.clear()
-        self.generate_generator_tones()
+        res = self.generate_generator_tones()
+        if not res:
+            self.log("compilation terminated.", c.log.error)
+            return
         if not self.x.inputs:
             self.log("Error: Empty notes (or all tools are muted.) Nothing to compile", c.log.error)
             return
+        # apply compilation_start_time
+        if compilation_start_time > 0:
+            self.x.adjust_start_time(compilation_start_time)
         # generate kernel code
         with open("source/kernel_template.cl") as file:
             code = file.read()
@@ -2687,11 +3035,11 @@ class SynthesizerProject:
         self.hl = min(15, max(7, self.w // 5))
         self.ht = self.h - self.hl
 
-    def run(self):
-
+    def init_d(self):
         self.d = jsd(
             mode="view",
-            log = [],
+            log=[],
+            last_save_file=None,
             music=jsd(
                 track=None,
                 draw_time=0.0,
@@ -2705,13 +3053,22 @@ class SynthesizerProject:
                 last_action_time=0.0,
                 selection=jsd(
                     pos=None,
-                    note=None,
+                    column=None,
+                    tool=None,
+                    end_pos=None,
                     recalculate_cy=False,
                 )
+            ),
+            redo=jsd(
+                arr=[],
+                length=20,
             )
         )
+
+    def run(self):
+        self.init_d()
         self.configs = jsd(
-            tone_pitch=lambda x:x,
+            tone_pitch={},
             tact_size=4,
             tact_split=4,
             bps=60,
@@ -2780,16 +3137,9 @@ class SynthesizerProject:
             v *= fmax(0.01f, k);
             return v * rnd;
         """.replace(" "*8,"")))
-        self.tacts = []
+        self.tacts = [SynthesizerProjectTact(0.0, len(self.configs.kernel.tools))]
         self.resize()
 
-        # INIT?
-
-        tt = choice('rtmw')
-        self.configs.kernel.tools[0].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0, 'w': None}[tt]
-        self.configs.kernel.tools[1].configs.legato_mod = {'t': 1.25, 'm': 2.0, 'r': 4.0, 'w': None}[tt]
-        self.create(tt,dt=0.25*1.5) #  * 0.5 for 2x speed
-        self.log("created music: " + tt, c.log.info)
 
         while True:
             self.resize()
