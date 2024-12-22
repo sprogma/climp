@@ -26,11 +26,8 @@ float PianoSolo(float s, struct note *note, float rnd){
         0.0025,
         0.001
     };
-    float v = note->volume;
-    float x = (float)(s - note->start) / 44100.0f;
-    float l = (float)(note->end - note->start) / 44100.0f;
-    float k = tanh(200.0*x) * cos(x * 3.1415926 * 0.5 / l);
-    v *= k;
+    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+    v *= fmax(0.01f, k);
     
     float res = 0.0, dr;
     for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
@@ -42,108 +39,38 @@ float PianoSolo(float s, struct note *note, float rnd){
     }
     return res;
          }
-
-float PianoSoloChord(float s, struct note *note, float rnd){ 
-    float freq[] = {
-        1.0,
-        0.5,
-        0.2,
-        0.05,
-        0.1,
-        0.0025,
-        0.001
-    };
-
-    float v = note->volume;
-    float x = (float)(s - note->start) / 44100.0f;
-    float l = (float)(note->end - note->start) / 44100.0f;
-    float k = tanh(200.0*x) * cos(x * 3.1415926 * 0.5 / l);
-    v *= k;
-    
-    float res = 0.0, dr;
-    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-    {
-        float f = note->frequency * (fqid + 1);
-        float fv = freq[fqid];
-        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-        res += fv*v*dr;
-    }
-    return res;
-         }
-
-float PianoBassSolo(float s, struct note *note, float rnd){ 
-    float freq[] = {
-        0.5,
-        0.6,
-        0.05,
-        0.7,
-        0.05,
-        0.25,
-        0.15,
-        0.8,
-        0.015,
-        0.005,
-        0.015,
-        0.1,
-        0.015,
-        0.005,
-        0.015,
-        0.6,
-    };
-
-    float v = note->volume;
-    float x = (float)(s - note->start) / 44100.0f;
-    float l = (float)(note->end - note->start) / 44100.0f;
-    float k = tanh(200.0*x) * cos(x * 3.1415926 * 0.5 / l);
-    v *= k;
-
-    float res = 0.0, dr;
-    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-    {
-        float f = note->frequency * (fqid + 1) * 0.125;
-        float fv = freq[fqid];
-        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-        res += fv*v*dr;
-    }
-    return res;
- }
 
 float PianoBass(float s, struct note *note, float rnd){ 
-    float freq[] = {
-        0.5,
-        0.6,
-        0.05,
-        0.7,
-        0.05,
-        0.25,
-        0.15,
-        0.8,
-        0.015,
-        0.005,
-        0.015,
-        0.1,
-        0.015,
-        0.005,
-        0.015,
-        0.6,
-    };
+float freq[] = {
+    0.5,
+    0.6,
+    0.05,
+    0.7,
+    0.05,
+    0.25,
+    0.15,
+    0.8,
+    0.015,
+    0.005,
+    0.015,
+    0.1,
+    0.015,
+    0.005,
+    0.015,
+    0.6,
+};
+float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+v *= fmax(0.01f, k);
 
-    float v = note->volume;
-    float x = (float)(s - note->start) / 44100.0f;
-    float l = (float)(note->end - note->start) / 44100.0f;
-    float k = tanh(200.0*x) * cos(x * 3.1415926 * 0.5 / l);
-    v *= k;
-
-
-    float res = 0.0, dr;
-    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-    {
-        float f = note->frequency * (fqid + 1) * 0.125;
-        float fv = freq[fqid];
-        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-        res += fv*v*dr;
-    }
-    return res;
+float res = 0.0, dr;
+for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+{
+    float f = note->frequency * (fqid + 1) * 0.125;
+    float fv = freq[fqid];
+    dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+    res += fv*v*dr;
+}
+return res;
  }
 
 float Drum(float s, struct note *note, float rnd){ 
@@ -181,10 +108,8 @@ kernel void generation_kernel( __global float *dest,
             switch (notes[n].tool)
             {
             case 0: res += PianoSolo(s, notes + n, rnd); break;
-case 1: res += PianoSoloChord(s, notes + n, rnd); break;
-case 2: res += PianoBassSolo(s, notes + n, rnd); break;
-case 3: res += PianoBass(s, notes + n, rnd); break;
-case 4: res += Drum(s, notes + n, rnd); break;
+case 1: res += PianoBass(s, notes + n, rnd); break;
+case 2: res += Drum(s, notes + n, rnd); break;
 
             default:
                 break;
