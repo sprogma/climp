@@ -346,7 +346,7 @@ class Executor:
             try:
                 GLOBAL_FUNCTIONS[cmd](self, *shlex.split(args))
             except Exception as e:
-                log('error', f"Error at run of cmd-let {cmd}: {e}")
+                log('error', f"Error at run of command: {cmd}: {e}")
         else:
             if '(' in string:
                 string = '&' + string
@@ -354,7 +354,7 @@ class Executor:
                 if res:
                     self.not_for_shell = True
                     return True
-            log('error', f"Unknown cmd-let: {cmd}")# (so checked if it is function.)")
+            log('error', f"Unknown command: {cmd}")# (so checked if it is function.)")
         return True
 
 
@@ -1353,7 +1353,7 @@ GLOBAL_FUNCTIONS = {
 
 
 def gen_f(function_import):
-    return lambda self, *args: log('warn', f'skip cmd-let {function_import} because current music is None.') \
+    return lambda self, *args: log('warn', f'skip command {function_import} because current music is None.') \
         if self.selected is None \
         else music_class.FUNCTIONS[function_import](self, self.app.lists[self.app.d.list.album].list[self.selected], *args)
 for function_import in music_class.FUNCTIONS:
