@@ -17,10 +17,13 @@ from curses.textpad import Textbox, rectangle
 from threading import Thread, Lock
 import ctypes
 
+# from music_gen import *
+
 import music_class
-music_gen_path = pathlib.Path(__file__).parent.joinpath('./music_gen.py')
-with open(str(music_gen_path), 'r') as f:
-    exec(f.read())
+import music_gen
+#music_gen_path = pathlib.Path(__file__).parent.joinpath('./music_gen.py')
+#with open(str(music_gen_path), 'r') as f:
+#    exec(f.read())
 
 FREQ = 44100
 pygame.mixer.pre_init(FREQ)
@@ -28,6 +31,14 @@ pygame.init()
 
 MODE_EXPLORER = 0
 MODE_CONSOLE = 1
+global_executor_hash = 0
+
+EVENT_MUSIC_END = music_class.EVENT_MUSIC_END
+jsd = music_class.jsd
+jsd_recurse = music_class.jsd_recurse
+Music = music_class.Music
+MutableMusic = music_class.MutableMusic
+Album = music_class.Album
 
 """"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 # TODO:
@@ -41,204 +52,22 @@ MODE_CONSOLE = 1
 DRAW HELPER
 """
 
+def lib_linkage():
+    music_class.log = log
+    music_gen.addstr = addstr
+    music_gen.c = c
+    music_gen.sc = sc
+    music_gen.lsc = lsc
+    music_gen.rsc = rsc
+    music_gen.log = log
+    music_gen.jsd = jsd
+    music_gen.jsd_recurse = jsd_recurse
+
 
 def log(t, string):
     app.log(string, t)
 
 
-EVENT_MUSIC_END = music_class.EVENT_MUSIC_END
-jsd = music_class.jsd
-Music = music_class.Music
-MutableMusic = music_class.MutableMusic
-Album = music_class.Album
-music_class.log = log
-
-GLOBAL_HELP = [""" GLOBAL HELP :: PAGE 1 :: basics
-    --------- LANGUAGE SPECIFIC
-    it is two main states of program:  
-        * selected track
-        * current path
-    with path all is similar as in shell:
-        you have commands cd, dir, load
-        (see help on them by enter 'help <command name>')
-    selected track displayed as yellow line in right part.
-        it is track, with which many commands will work.
-        for example, command speedup (used for change temp) changes temp
-        of selected music.
-        
-        you can select track by 'select <track index / track name(may be unsupported)>'.
-        
-        also, loops change current selected track, you can learn about them at third page.
-""",
-""" GLOBAL HELP :: PAGE 2 :: commands
-    there is many commands, divided into groups:
-    (for each function you can see help by 'help <function name>')
-    
-    * current playing music manipulation
-        functions 'from' 'play' 'stop' 'pause'/'p' 'next'/'n'
-        
-    * album changing:
-        functions 'shuffle' 'del' 'select'
-    
-    * path change & loading
-        functions 'cd' 'dir' 'load'/'l'
-    
-    * change music (filters, etc.)
-        ...
-    
-    * console manipulations
-        function 'print'    
-    
-    * exit :)
-        function 'exit'
-""",
-""" GLOBAL HELP :: PAGE 3 :: join commands, loops
-    join commands: 
-        you can use | for join commands together
-        
-        EXAMPLE:
-            
-            1. print hello
-            2. exit
-          is equal to
-            1. print hello | exit 
-        
-    loops: 
-        you can execute loop with 2 variants:
-            * <command>  -> executes command for every track (select it, and execute command)
-            %<a>-<b>% <command>  -> executes loop from <a> to (including) <b>, select this value, and execute command.
-        you can get loop index, by write
-            @<num>, where num is id of loop (in reverse order, @1 means last loop)
-        
-        EXAMPLE:
-            1. * print @1   -> prints list from 0 to length of album - 1
-            
-            1. %1-5%%1-6% print @1 @2   -> prints 30 lines ('0 0', '1 0', '2 0' ...)
-                                        ! @1 means second loop (1-6), because it is last loop.
-                                          to get first loop value, used @2 (because it is second loop from top)
-            
-            1. %1-5% get-temp | reverse-temp -> execute block of 2 commands for id from 1 to 5
-"""]
-
-GLOBAL_FUNCTIONS_HELP = {
-    'print': """ Help on function "print":
-        arg list: 
-            *args   -> any strings to print
-        print all args, joined by space.""",
-    'next': """ Help on function "next":
-        arg list: 
-            [int steps=1]   -> default 1, count of 'next' steps 
-        play next music (as then current ends), 
-        repeat this 'steps' times.
-        
-        This command has alias: 'n'.""",
-    'from': """ Help on function "from":
-        arg list: 
-            [int id=current_selected_track]   -> default to current selected track, index of first track to be played 
-        play music from index id.""",
-    'select': """ Help on function "select":
-        arg list: 
-            [int id=current_playing_music]   -> default to current track playing, index of track to select 
-        selects track with given id""",
-    'replay': """ Help on function "replay":
-        arg list: 
-            None 
-        start playing that track, which is already playing now
-        (replay it)""",
-    'pause': """ Help on function "pause":
-        arg list: 
-            None 
-        pause/unpause current playing music
-        
-        This command has alias: 'p'.""",
-    'stop': """ Help on function "stop":
-        arg list: 
-            None 
-        stops playing music""",
-    'play': """ Help on function "play":
-        arg list: 
-            None 
-        starts playing music""",
-    'shuffle': """ Help on function "shuffle":
-        arg list: 
-            None 
-        shuffle all music, playing track places in first position.""",
-    'cd': """ Help on function "cd":
-        arg list: 
-            string path 
-        changes path to new (may be relative). 
-        You can use autofill by pressing TAB key""",
-    'dir': """ Help on function "dir":
-        arg list: 
-            None
-        displays content of current path directory""",
-    'load': """ Help on function "load":
-        arg list: 
-            string template
-        loads all music which pass template.
-        you can use templates, like in command shell ('ab*c?.txt')
-        load can automatically add extensions
-        you can write 'abc' and it will load 'abc.mp3'
-        displays content of current path directory
-        ! load will pause current music, while it will be loading new.
-        
-        This command has alias: 'l'.""",
-    'del': """ Help on function "del":
-        arg list: 
-            int id
-        deletes music with index id from playlist.""",
-    'l': """ Help on function "l":
-        it is alias to 'load'""",
-    'p': """ Help on function "p":
-        it is alias to 'pause'""",
-    'n': """ Help on function "n":
-        it is alias to 'next'""",
-    'exit': """ Help on function "exit":
-        arg list: 
-            int return_code
-        exit from application with return_code.""",
-    'help': """ Help on function "help":
-        arg list: 
-            [string info=None]
-        displays help for command-lets,
-        with no arguments, displays main help,
-        with argument, displays help for given function (command-let).""",
-}
-
-GLOBAL_FUNCTIONS = {
-    'print': lambda self, *args: log('info', ' '.join(args)),
-    'next': lambda self, int_steps=1: [self.app.lists[self.app.d.list.album].play_next() for i in range(int(int_steps))],
-    'from': lambda self, int_id=None: self.app.lists[self.app.d.list.album].play_from(self.app.d.list.selected[self.app.d.list.album] if int_id is None else int(int_id)),
-    'select': lambda self, int_id=None: (self.app.d.list.selected.__setitem__(self.app.d.list.album, self.app.lists[self.app.d.list.album].playing if int_id is None else int(int_id)) if int_id is None or 0 <= int(int_id) < len(self.app.lists[self.app.d.list.album].list) else log('warn', 'value is out of bounds.')),
-    'replay': lambda self: self.app.lists[self.app.d.list.album].play_from(self.app.lists[self.app.d.list.album].playing),
-    'pause': lambda self: self.app.lists[self.app.d.list.album].pause_or_unpause(),
-    'stop': lambda self: self.app.lists[self.app.d.list.album].stop(),
-    'play': lambda self: self.app.lists[self.app.d.list.album].play(),
-    'shuffle': lambda self: self.app.lists[self.app.d.list.album].shuffle(),
-    'cd': lambda self, string: (self.app.d.__setitem__('path', os.path.normpath(os.path.join(self.app.d.path, string))), self.app.listdir()) if os.path.isdir(os.path.join(self.app.d.path, string)) else log('error', 'no such directory. (use dir to see scope)'),
-    'dir': lambda self: [log('info', i.name) for i in self.app.d.listdir],
-    'load': lambda self, string: self.app.load_track(string),
-    'del': lambda self, int_id=None: self.app.lists[self.app.d.list.album].remove(self.app.lists[self.app.d.list.album].playing if int_id is None else int(int_id)),
-    'jobs': lambda self: self.app.list_jobs(),
-    'wait': lambda self, wait_time: time.sleep(float(wait_time)),
-    'l': lambda *args: GLOBAL_FUNCTIONS['load'](*args),  # alias for load
-    'p': lambda *args: GLOBAL_FUNCTIONS['pause'](*args),  # alias for pause
-    'n': lambda *args: GLOBAL_FUNCTIONS['next'](*args),  # alias for next
-    'exit': lambda self, code=0: (curses.endwin(), exit(code)),
-    'help': lambda self, string="": self.app.get_help(string),
-}
-
-global_executor_hash = 0
-
-
-def gen_f(function_import):
-    return lambda self, *args:  log('warn', f'skip cmd-let {function_import} because current music is None.') \
-                                if self.selected is None \
-                                else music_class.FUNCTIONS[function_import](self.app.lists[self.app.d.list.album].list[self.selected], *args)
-
-
-for function_import in music_class.FUNCTIONS:
-    GLOBAL_FUNCTIONS[function_import] = gen_f(function_import)
 
 
 def addstr(y, x, string, color):
@@ -301,6 +130,7 @@ class Executor:
         self.app: Application = app
         self.command = command
         self.selected = selected
+        self.not_for_shell = False
         self.d = jsd(
             loops=[],
             loops_ends=[],
@@ -351,7 +181,11 @@ class Executor:
                 log('error', f'at execution happened unknown error {e}.')
                 return False
             if not res:
-                return False
+                if not self.not_for_shell:
+                    # to do: use pipe for cmd tool (bash/pwsh) and complete call
+                    return False
+                else:
+                    return False
         return True
 
     def console_execute_string(self, string):
@@ -367,7 +201,7 @@ class Executor:
             wait_for = None
             if string.startswith('*!'):
                 try:
-                    sub = re.search('\d+', string)[0]
+                    sub = re.search(r'\d+', string)[0]
                 except Exception as e:
                     print(f"empty wait for statement. {e}")
                     return False
@@ -518,6 +352,7 @@ class Executor:
                 string = '&' + string
                 res = self.console_execute_string(string)
                 if res:
+                    self.not_for_shell = True
                     return True
             log('error', f"Unknown cmd-let: {cmd}")# (so checked if it is function.)")
         return True
@@ -826,7 +661,7 @@ class Application:
                 self.autocomplete()
             else:
                 # insert character
-                if chr(key) == '\\' or chr(key) == '/' and self.d.console.autocompleted and self.d.console.string.rstrip()[-1] in ("'", '"'):
+                if (chr(key) == '\\' or chr(key) == '/') and self.d.console.autocompleted and self.d.console.string.rstrip()[-1] in ("'", '"'):
                     # if autocompleted, it can remove last quote.
                     self.d.console.string = self.d.console.string.rstrip()[:-1] + chr(key)
                 else:
@@ -1136,6 +971,16 @@ class Application:
             history_position=0,
         )
 
+        lib_linkage()
+
+        x = music_gen.SynthesizerProject(climplib.kernel)
+        x.run()
+        #x.create('m')
+        #self.lists[self.d.list.album].add(x.x.sound)
+        #x = music_gen.TrackProject(climplib.kernel)
+        #x.create('t')
+        #self.lists[self.d.list.album].add(x.x.sound)
+
         self.listdir()
 
         while True:
@@ -1236,9 +1081,18 @@ c = jsd({
     }),
     'console': jsd({
         'text': 37,
+    }),
+    'gen': jsd({
+        'text': 39,
+        'note': jsd({
+            'base': 40,
+            'playing': 41,
+            'selected': 42,
+        }),
+        'timeline': 43,
     })
 })
-#    END INDEX IS 38, at 'job'
+#    END INDEX IS 39, at 'gen/text'
 
 climplib = None
 C_SPECTROGRAM = None
@@ -1308,18 +1162,220 @@ def init_colors():
     curses.init_pair(c.info.timeline.empty.unfocus, COLOR_LIGHT_GREY, COLOR_LIGHT_GREY)
     curses.init_pair(c.info.timeline.empty.focus,   COLOR_LIGHT_GREY, COLOR_LIGHT_GREY)
     curses.init_pair(c.console.text, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(c.gen.text, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(c.gen.note.base, curses.COLOR_WHITE, curses.COLOR_BLACK)
+    curses.init_pair(c.gen.note.playing, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+    curses.init_pair(c.gen.note.selected, curses.COLOR_BLACK, curses.COLOR_CYAN)
+    curses.init_pair(c.gen.timeline, curses.COLOR_BLACK, curses.COLOR_YELLOW)
+
+
+
+GLOBAL_HELP = [""" GLOBAL HELP :: PAGE 1 :: basics
+    --------- LANGUAGE SPECIFIC
+    it is two main states of program:  
+        * selected track
+        * current path
+    with path all is similar as in shell:
+        you have commands cd, dir, load
+        (see help on them by enter 'help <command name>')
+    selected track displayed as yellow line in right part.
+        it is track, with which many commands will work.
+        for example, command speedup (used for change temp) changes temp
+        of selected music.
+
+        you can select track by 'select <track index / track name(may be unsupported)>'.
+
+        also, loops change current selected track, you can learn about them at third page.
+""",
+               """ GLOBAL HELP :: PAGE 2 :: commands
+                   there is many commands, divided into groups:
+                   (for each function you can see help by 'help <function name>')
+               
+                   * current playing music manipulation
+                       functions 'from' 'play' 'stop' 'pause'/'p' 'next'/'n'
+               
+                   * album changing:
+                       functions 'shuffle' 'del' 'select'
+               
+                   * path change & loading
+                       functions 'cd' 'dir' 'load'/'l'
+               
+                   * change music (filters, etc.)
+                       ...
+               
+                   * console manipulations
+                       function 'print'    
+               
+                   * exit :)
+                       function 'exit'
+               """,
+               """ GLOBAL HELP :: PAGE 3 :: join commands, loops
+                   join commands: 
+                       you can use | for join commands together
+               
+                       EXAMPLE:
+               
+                           1. print hello
+                           2. exit
+                         is equal to
+                           1. print hello | exit 
+               
+                   loops: 
+                       you can execute loop with 2 variants:
+                           * <command>  -> executes command for every track (select it, and execute command)
+                           %<a>-<b>% <command>  -> executes loop from <a> to (including) <b>, select this value, and execute command.
+                       you can get loop index, by write
+                           @<num>, where num is id of loop (in reverse order, @1 means last loop)
+               
+                       EXAMPLE:
+                           1. * print @1   -> prints list from 0 to length of album - 1
+               
+                           1. %1-5%%1-6% print @1 @2   -> prints 30 lines ('0 0', '1 0', '2 0' ...)
+                                                       ! @1 means second loop (1-6), because it is last loop.
+                                                         to get first loop value, used @2 (because it is second loop from top)
+               
+                           1. %1-5% get-temp | reverse-temp -> execute block of 2 commands for id from 1 to 5
+               """]
+
+GLOBAL_FUNCTIONS_HELP = {
+    'print': """ Help on function "print":
+        arg list: 
+            *args   -> any strings to print
+        print all args, joined by space.""",
+    'next': """ Help on function "next":
+        arg list: 
+            [int steps=1]   -> default 1, count of 'next' steps 
+        play next music (as then current ends), 
+        repeat this 'steps' times.
+
+        This command has alias: 'n'.""",
+    'from': """ Help on function "from":
+        arg list: 
+            [int id=current_selected_track]   -> default to current selected track, index of first track to be played 
+        play music from index id.""",
+    'select': """ Help on function "select":
+        arg list: 
+            [int id=current_playing_music]   -> default to current track playing, index of track to select 
+        selects track with given id""",
+    'replay': """ Help on function "replay":
+        arg list: 
+            None 
+        start playing that track, which is already playing now
+        (replay it)""",
+    'pause': """ Help on function "pause":
+        arg list: 
+            None 
+        pause/unpause current playing music
+
+        This command has alias: 'p'.""",
+    'stop': """ Help on function "stop":
+        arg list: 
+            None 
+        stops playing music""",
+    'play': """ Help on function "play":
+        arg list: 
+            None 
+        starts playing music""",
+    'shuffle': """ Help on function "shuffle":
+        arg list: 
+            None 
+        shuffle all music, playing track places in first position.""",
+    'cd': """ Help on function "cd":
+        arg list: 
+            string path 
+        changes path to new (may be relative). 
+        You can use autofill by pressing TAB key""",
+    'dir': """ Help on function "dir":
+        arg list: 
+            None
+        displays content of current path directory""",
+    'load': """ Help on function "load":
+        arg list: 
+            string template
+        loads all music which pass template.
+        you can use templates, like in command shell ('ab*c?.txt')
+        load can automatically add extensions
+        you can write 'abc' and it will load 'abc.mp3'
+        displays content of current path directory
+        ! load will pause current music, while it will be loading new.
+
+        This command has alias: 'l'.""",
+    'del': """ Help on function "del":
+        arg list: 
+            int id
+        deletes music with index id from playlist.""",
+    'l': """ Help on function "l":
+        it is alias to 'load'""",
+    'p': """ Help on function "p":
+        it is alias to 'pause'""",
+    'n': """ Help on function "n":
+        it is alias to 'next'""",
+    'exit': """ Help on function "exit":
+        arg list: 
+            int return_code
+        exit from application with return_code.""",
+    'help': """ Help on function "help":
+        arg list: 
+            [string info=None]
+        displays help for command-lets,
+        with no arguments, displays main help,
+        with argument, displays help for given function (command-let).""",
+}
+
+GLOBAL_FUNCTIONS = {
+    'print': lambda self, *args: log('info', ' '.join(args)),
+    'next': lambda self, int_steps=1: [self.app.lists[self.app.d.list.album].play_next() for i in range(int(int_steps))],
+    'from': lambda self, int_id=None: self.app.lists[self.app.d.list.album].play_from(
+        self.app.d.list.selected[self.app.d.list.album] if int_id is None else int(int_id)),
+    'select': lambda self, int_id=None: (self.app.d.list.selected.__setitem__(self.app.d.list.album,
+                                                                              self.app.lists[self.app.d.list.album].playing if int_id is None else int(
+                                                                                  int_id)) if int_id is None or 0 <= int(int_id) < len(
+        self.app.lists[self.app.d.list.album].list) else log('warn', 'value is out of bounds.')),
+    'replay': lambda self: self.app.lists[self.app.d.list.album].play_from(self.app.lists[self.app.d.list.album].playing),
+    'pause': lambda self: self.app.lists[self.app.d.list.album].pause_or_unpause(),
+    'stop': lambda self: self.app.lists[self.app.d.list.album].stop(),
+    'play': lambda self: self.app.lists[self.app.d.list.album].play(),
+    'shuffle': lambda self: self.app.lists[self.app.d.list.album].shuffle(),
+    'cd': lambda self, string: (self.app.d.__setitem__('path', os.path.normpath(os.path.join(self.app.d.path, string))), self.app.listdir()) if os.path.isdir(
+        os.path.join(self.app.d.path, string)) else log('error', 'no such directory. (use dir to see scope)'),
+    'dir': lambda self: [log('info', i.name) for i in self.app.d.listdir],
+    'load': lambda self, string: self.app.load_track(string),
+    'del': lambda self, int_id=None: self.app.lists[self.app.d.list.album].remove(
+        self.app.lists[self.app.d.list.album].playing if int_id is None else int(int_id)),
+    'jobs': lambda self: self.app.list_jobs(),
+    'wait': lambda self, wait_time: time.sleep(float(wait_time)),
+    'l': lambda *args: GLOBAL_FUNCTIONS['load'](*args),  # alias for load
+    'p': lambda *args: GLOBAL_FUNCTIONS['pause'](*args),  # alias for pause
+    'n': lambda *args: GLOBAL_FUNCTIONS['next'](*args),  # alias for next
+    'exit': lambda self, code=0: (curses.endwin(), exit(code)),
+    'help': lambda self, string="": self.app.get_help(string),
+}
+
+
+def gen_f(function_import):
+    return lambda self, *args: log('warn', f'skip cmd-let {function_import} because current music is None.') \
+        if self.selected is None \
+        else music_class.FUNCTIONS[function_import](self, self.app.lists[self.app.d.list.album].list[self.selected], *args)
+for function_import in music_class.FUNCTIONS:
+    GLOBAL_FUNCTIONS[function_import] = gen_f(function_import)
+
 
 
 if __name__ == "__main__":
-    climplib = ctypes.cdll.LoadLibrary(r"D:\C\git\climp\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+    path = __file__
+    path = path[:max(path.rfind('/'), path.rfind('\\'))]
+    path = path[:max(path.rfind('/'), path.rfind('\\'))]
+    climplib = ctypes.cdll.LoadLibrary(fr"{path}\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
     climplib.kernel.argtypes = [
         np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
         ctypes.c_size_t,
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=2, flags='C_CONTIGUOUS'),  # notes
-        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # tools
-        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # start
+        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
         ctypes.c_size_t,
-        ctypes.c_int32,
     ]
+    climplib.kernel.restype = ctypes.c_int
     app = Application()
     curses.wrapper(app.run)

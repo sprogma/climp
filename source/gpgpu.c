@@ -13,6 +13,9 @@ cl_context       SL_context;
 cl_command_queue SL_queues[MAX_SL_PLATFORMS][MAX_SL_QUEUES];
 int              SL_queues_len[MAX_SL_PLATFORMS];
 
+int SL_best_platform = 0;
+int SL_best_platform_value = 0;
+
 
 int SL_init(cl_device_type device_flags)
 {
@@ -64,6 +67,14 @@ int SL_init(cl_device_type device_flags)
         #undef PRINV
         free(info);
         putchar('\n');
+
+        int value = 0;
+        value += 0;
+        if (value > SL_best_platform_value)
+        {
+            SL_best_platform = i;
+            SL_best_platform_value = value;
+        }
     }
 
     putchar('\n');
@@ -167,6 +178,15 @@ int SL_init(cl_device_type device_flags)
     return 0;
 }
 
+int SL_use_platform(int preferred_type)
+{
+    if (preferred_type == SL_PLATFORM_BEST)
+    {
+        return SL_best_platform;
+    }
+    return 0;
+}
+
 int SL_init_from_platform(int platform_id)
 {
     int err;
@@ -228,15 +248,16 @@ cl_kernel SL_compile_text(int platform_id, int device_id, const char *kernel_fun
                                                    &err);
     if (err) { if (ret_err) *ret_err = err; return NULL; }
     err = clBuildProgram(program,
-                         1,
-                         SL_devices[platform_id] + device_id, // compile on all devices
+                         0,
+                         NULL, // SL_devices[platform_id] + device_id compile on all devices
                          // https://registry.khronos.org/OpenSL/specs/3.0-unified/html/OpenCL_API.html#compiler-options
-                         "-cl-single-precision-constant -cl-unsafe-math-optimizations",
+                         " -cl-std=CL2.0 -cl-single-precision-constant -cl-unsafe-math-optimizations",
                          NULL,  // using no function for errors detection
                          NULL); // and no it's data
 
     if (err)
     {
+        printf("BuildProgram Error: %d\n", err);
         size_t len = 0;
         cl_int ret = CL_SUCCESS;
         ret = clGetProgramBuildInfo(program, SL_devices[platform_id][device_id], CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
@@ -292,6 +313,7 @@ cl_kernel SL_compile_file(int platform_id, int device_id, const char *kernel_fun
     content = (char *)malloc(file_read_size);
     if (!content) { fclose(fp); if (ret_err) *ret_err = 257; return NULL; }
     content_length = fread(content, 1, file_read_size, fp);
+    content[content_length] = 0;
     fclose(fp);
 
     cl_kernel kernel = SL_compile_text(0, 0, kernel_function_name, content, content_length, &err);

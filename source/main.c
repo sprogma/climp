@@ -10,36 +10,64 @@
 #include "climpapi.h"
 #include "gpgpu.h"
 
+
 #include "main.h"
 
 
 
-float f(float x)
-{
-    return tanh(x);
-}
-
 void DLL_EXPORT kernel(
     float *dst,
-    size_t dst_len,
-    float *notes,
-    int   *tools,
-    int   *modes,
-    size_t notes_len,
-    int    base_freq
+    int dst_len,
+    // notes
+    int *tools,
+    float *times,
+    float *lengths,
+    float *freqs,
+    float *volumes,
+    int notes_len
 )
 {
+    int err;
     struct track t;
 
-    climp_load_track(&t, dst, dst_len, notes, tools, modes, notes_len, base_freq);
 
-    climp_process_track_software(&t);
+    // init connection
+    err = climp_connect();
+    if (err)
+    {
+        fprintf(stderr, "Error in connection. Failed to connect device.");
+        exit(1);
+    }
 
-    fflush(stdout);
-    fflush(stderr);
+
+    // load track
+    err = climp_track_load(&t, dst, dst_len, tools, times, lengths, freqs, volumes, notes_len);
+    if (err)
+    {
+        fprintf(stderr, "error at loading.\n");
+        exit(1);
+    }
+
+    // process
+    err = climp_track_process(&t);
+    if (err)
+    {
+        fprintf(stderr, "error at processing.\n");
+        exit(1);
+    }
+
+    err = climp_track_destroy(&t);
+    if (err)
+    {
+        fprintf(stderr, "error at deallocating memory.\n");
+        exit(1);
+    }
 
     return;
 }
+
+
+
 
 DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
 {
@@ -64,3 +92,19 @@ DLL_EXPORT BOOL APIENTRY DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpv
     }
     return TRUE; // succesful
 }
+
+/*int main()
+{
+    int err;
+    err = climp_connect();
+
+    float t[2] = {0.0};
+    float l[2] = {0.001};
+    float f[2] = {440.0};
+    float v[2] = {1.0};
+    float x[2000];
+    kernel(x, 1000, t, l, f, v, 1);
+
+    if (err) { fprintf(stderr, "Error in connection. Failed to load DLL."); return FALSE; }
+    return 0;
+}*/

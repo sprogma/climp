@@ -12,88 +12,183 @@
 
 
 
+int UsedPlatform = -1;
+int UsedDevice = -1;
 
-int climp_load_track(struct track *t, float *dst, size_t dst_len, float *notes,
-                      int *tools, int *modes, size_t notes_len, int base_freq)
+
+
+int climp_track_generate_beats(struct track *t);
+int climp_track_process_C(struct track *t);
+
+
+
+int climp_connect()
 {
-    // fill meta data
+    if (UsedPlatform != -1)
+    {
+        return 0;
+    }
+    int err;
+    err = SL_init(CL_DEVICE_TYPE_ALL); fflush(stdout);
+    UsedPlatform = SL_use_platform(SL_PLATFORM_BEST);
+    UsedDevice = 0;
+    if (err){ fprintf(stderr, "error when trying to establish connection"); return err; }
+    err = SL_init_from_platform(UsedPlatform);
+    if (err){ fprintf(stderr, "error when trying to initialize platform"); return err; }
+    err = SL_init_queues_on_platform(UsedPlatform);
+    if (err){ fprintf(stderr, "error when trying to initialize device"); return err; }
+    return 0;
+}
 
-    t->time  = dst_len;           // load samples count.
-    t->freq  = base_freq;         // load freq.
-    t->ffreq = base_freq;         // load freq.
-    t->beat_time = t->freq / 10; // 10 beats per second.
 
-    t->beats_len = t->time / t->beat_time + 1;
+
+int climp_track_load(struct track *t, float *dst, int dst_len, int *tools, float *times, float *lengths, float *freqs, float *volumes, int notes_len)
+{
+    // fill structure
+    t->dest = dst;
+    t->opt_beat_samples = 44100 / 10;
+    t->samples = dst_len;
+    t->samplesf = (float)dst_len;
+    t->freqf = 44100.0f;
+    t->freq = 44100; // samples per second
     t->notes_len = notes_len;
+    t->notes = malloc(sizeof(*t->notes) * t->notes_len);
+    t->opt_len = 1 + t->samples / t->opt_beat_samples;
+    t->opt = malloc(sizeof(*t->opt) * t->opt_len);
+    memset(t->opt, 0xFF, sizeof(*t->opt) * t->opt_len);
 
-    // bind memory buffers
-
-    t->raw = dst;           // use given pointer
-    t->notes = notes;       // use given pointer
-    t->notes_meta = tools;  // use given pointer
-    t->beats = malloc(sizeof(*t->beats) * t->beats_len);
-
-    // fill buffers
-
-    memset(t->beats, 0xFF, sizeof(*t->beats) * t->beats_len); // fill beats with -1.
-    for (int i = 0; i < t->notes_len; ++i)
+    // load notes
+    for (int id = 0; id < notes_len; ++id)
     {
-        t->notes[i].sample[0] = notes[6 * i + 0] * base_freq;
-        t->notes[i].sample[1] = notes[6 * i + 1] * base_freq;
+        t->notes[id].tool  = tools[id];
+        t->notes[id].start  = (int)(t->freqf * times[id]);
+        t->notes[id].end    = (int)(t->freqf * (times[id] + lengths[id]));
+        t->notes[id].freq   = freqs[id];
+        t->notes[id].volume = volumes[id];
     }
 
-    // calculate buffers
-    {
-        for (int i = 0; i < t->notes_len; ++i)
-        {
-            int l = t->notes[i].sample[0];
-            int r = t->notes[i].sample[1];
-            // apply to all buffers
-            int bl = l / t->beat_time;
-            int br = r / t->beat_time;
-            for (int b = bl; b <= br; ++b)
-            {
-                int k = 0;
-                while (t->beats[b][k] != -1 && k < NOTES_PER_BEAT) { k++; } // get end of non -1 data
-                if (k == NOTES_PER_BEAT)
-                {
-                    fprintf(stderr, "Error: too many notes in one beat.\n");
-                    return 1;
-                }
-                t->beats[b][k] = i;
-            }
-        }
-    }
 
-    // return
+    climp_track_generate_beats(t);
+
+
     return 0;
 }
 
 
-int climp_process_track_software(struct track *t)
+/**
+    Calculate beats buffer:
+        opt[time_step] -> array of notes (their ids),
+                          which intersect with this time_step
+**/
+int climp_track_generate_beats(struct track *t)
 {
-    // for each sample: generate sound.
-    for (int i = 0; i < t->time; ++i)
+    // for each note
+    for (int note_id = 0; note_id < t->notes_len; ++note_id)
     {
-        float value = 0.0;
-
-        int note, k = 0, bt = i / t->beat_time;
-        while ((note = t->beats[bt][k++]) != -1)
+        // get boundaries, there note sounds
+        int l = t->notes[note_id].start / t->opt_beat_samples;
+        int r = t->notes[note_id].end / t->opt_beat_samples;
+        for (int beat = l; beat <= r; ++beat)
         {
-            // get shift
-            float start = (float)((i - t->notes[note].sample[0]) / (float)(t->notes[note].sample[1] - t->notes[note].sample[0]));
-            if (0.f <= start && start <= 1.f)
+            int k = 0; // position in beat cell to insert note id.
+            // inefficient insert, but efficient read.
+            while (t->opt[beat][k] != -1 && k+1 < PARALLEL_CHANELS) {k++;}
+            // raise error if buffer size is exceeded
+            if (k == PARALLEL_CHANELS)
             {
-                // add note
-                float v = t->notes[note].volume[0] * (1.0f - start) + start * t->notes[note].volume[1];
-                float f = t->notes[note].freq[0] * (1.0f - start) + start * t->notes[note].freq[1];
-
-                value += v * sin((float)i * f / t->ffreq * 2.0f * (float)M_PI);
+                fprintf(stderr, "Error: count of notes in one beat has exceeded value PARALLEL_CHANELS=%d.\n"
+                                "Simplify your track, use more complicated instruments, or increase PARALLEL_CHANELS value.\n", PARALLEL_CHANELS-1);
+                return 1;
             }
+            // append note to this beat
+            t->opt[beat][k] = note_id;
         }
-
-        t->raw[i] = value;
     }
+    return 0;
+}
+
+
+int climp_track_process(struct track *t)
+{
+    int err;
+
+    // compile kernel
+    cl_kernel kernel = SL_compile_file(UsedPlatform, UsedDevice, "generation_kernel", "D:/C/git/climp/source/kernel.cl", &err);
+    if (err) { fprintf(stderr, "kernel compilation failed.\n"); return err;}
+
+    // allocate memory
+    cl_mem dest = SL_alloc(t->samples * sizeof(cl_float), 0, &err);
+    if (err) { fprintf(stderr, "memory allocation failed. %d\n", err); return err;}
+    cl_mem notes = SL_alloc(t->notes_len * sizeof(*t->notes), CL_MEM_READ_ONLY, &err);
+    if (err) { fprintf(stderr, "memory allocation failed. %d\n", err); return err;}
+    cl_mem opt = SL_alloc(t->opt_len * sizeof(*t->opt), CL_MEM_READ_ONLY, &err);
+    if (err) { fprintf(stderr, "memory allocation failed. %d\n", err); return err;}
+
+    // load buffers
+    err = clEnqueueWriteBuffer( SL_queues[UsedPlatform][UsedDevice],
+                          notes,
+                          CL_TRUE,
+                          0,
+                          sizeof(*t->notes) * t->notes_len,
+                          t->notes,
+                          0, NULL, NULL );
+    clEnqueueWriteBuffer( SL_queues[UsedPlatform][UsedDevice],
+                          opt,
+                          CL_TRUE,
+                          0,
+                          sizeof(*t->opt) * t->opt_len,
+                          t->opt,
+                          0, NULL, NULL );
+
+    // set args
+    clSetKernelArg(kernel, 0, sizeof(dest), (void*) &dest);
+    clSetKernelArg(kernel, 1, sizeof(t->samples), (void*) &t->samples);
+    clSetKernelArg(kernel, 2, sizeof(notes), (void*) &notes);
+    clSetKernelArg(kernel, 3, sizeof(t->notes_len), (void*) &t->notes_len);
+    clSetKernelArg(kernel, 4, sizeof(opt), (void*) &opt);
+    clSetKernelArg(kernel, 5, sizeof(t->opt_beat_samples), (void*) &t->opt_beat_samples);
+    clSetKernelArg(kernel, 6, sizeof(t->opt_len), (void*) &t->opt_len);
+
+    struct shape_t shape = {};
+    shape.dim = 1;
+    shape.global_offset[0] = 0;
+    shape.global_size[0] = t->samples;
+
+    printf("Start [total_size=%dk]...\n", t->samples/1000);fflush(stdout);
+    err = SL_run(UsedPlatform, UsedDevice, kernel, shape);
+    if (err) { fprintf(stderr, "error at run of kernel. %d\n", err); return err; }
+    SL_finish_queues_on_platform(UsedPlatform);
+
+
+    cl_float *ptr;
+    ptr = (cl_float *) clEnqueueMapBuffer( SL_queues[UsedPlatform][UsedDevice],
+                                          dest,
+                                          CL_TRUE,
+                                          CL_MAP_READ,
+                                          0,
+                                          t->samples * sizeof(cl_float),
+                                          0, NULL, NULL, NULL );
+    printf("End...\n");fflush(stdout);
+
+
+    memcpy(t->dest, ptr, sizeof(*t->dest) * t->samples);
+
+    clEnqueueUnmapMemObject(SL_queues[UsedPlatform][UsedDevice],
+                            dest,
+                            ptr,
+                            0, NULL, NULL);
+    clReleaseMemObject(dest);
+    clReleaseMemObject(notes);
+    clReleaseMemObject(opt);
 
     return 0;
 }
+
+
+int climp_track_destroy(struct track *t)
+{
+    free(t->notes);
+    free(t->opt);
+    return 0;
+}
+

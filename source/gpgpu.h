@@ -3,11 +3,17 @@
 
 #include "CL/cl.h"
 
-#define MAX_SL_PLATFORMS 2
+#define MAX_SL_PLATFORMS 4
 #define MAX_SL_DEVICES 4
 #define MAX_SL_CONTEXTS 1
 #define MAX_SL_QUEUES MAX_SL_DEVICES
 #define MAX_DIMENSIONS 4
+
+
+enum // preferred_type
+{
+    SL_PLATFORM_BEST,
+};
 
 struct shape_t
 {
@@ -29,10 +35,14 @@ extern int              SL_queues_len[MAX_SL_PLATFORMS];
 
 
 int SL_init(cl_device_type device_flags);
+int SL_use_platform(int preferred_type);
 int SL_init_from_platform(int platform_id);
 int SL_init_from_device(int platform_id, int device_id);
 int SL_init_queues_on_platform(int platform_id);
 int SL_init_queue_on_device(int platform_id, int device_id);
+
+int SL_finish_queues_on_platform(int platform_id);
+int SL_finish_queue(int platform_id, int device_id);
 
 cl_kernel SL_compile_text(int platform_id, int device_id, const char *kernel_function_name, const char *source_code, size_t source_length, int *ret_err);
 cl_kernel SL_compile_file(int platform_id, int device_id, const char *kernel_function_name, const char *filename, int *ret_err);

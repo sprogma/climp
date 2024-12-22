@@ -1,78 +1,123 @@
 
-#define delta_time 0.001
-#define delta_time_2 (delta_time * delta_time)
+#define PARALLEL_CHANELS 2048
 
-struct point
+struct __attribute__ ((packed)) note
 {
-    float3 pos;
-    float3 ppos;
-    float3 force;
-    int type;
+    int tool;
+    int start;
+    int end;
+    float frequency;
+    float volume;
 };
 
 
-float type_mass[3] = {1.0, 1.0, 0.0005446623093};
-float type_charge[3] = {1.0, 0.0, -1.0};
-
-
-
-kernel void phys_a( __global struct point *points, int points_len )
-{
-    /* nothing. [place to optimisation grid creation] */
-    return;
+float random(float time) {
+    float _;
+    return fract(sin(time * 78.233) * 43758.5453123, &_);
 }
 
-
-kernel void phys_b( __global struct point *points, int points_len )
-{
-    /* calculate forces */
-    int id = get_global_id(0);
-
-    float3 force = 0;
-
-    for (int i = 0; i < points_len; ++i)
+float PianoSolo(float s, struct note *note, float rnd){ 
+    float freq[] = {
+        1.0,
+        0.5,
+        0.2,
+        0.05,
+        0.1,
+        0.0025,
+        0.001
+    };
+    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+    v *= fmax(0.01f, k);
+    
+    float res = 0.0, dr;
+    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
     {
-        if (i != id)
+        float f = note->frequency * (fqid + 1);
+        float fv = freq[fqid];
+        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+        res += fv*v*dr;
+    }
+    return res;
+         }
+
+float PianoBass(float s, struct note *note, float rnd){ 
+float freq[] = {
+    0.5,
+    0.6,
+    0.05,
+    0.7,
+    0.05,
+    0.25,
+    0.15,
+    0.8,
+    0.015,
+    0.005,
+    0.015,
+    0.1,
+    0.015,
+    0.005,
+    0.015,
+    0.6,
+};
+float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+v *= fmax(0.01f, k);
+
+float res = 0.0, dr;
+for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
+{
+    float f = note->frequency * (fqid + 1) * 0.125;
+    float fv = freq[fqid];
+    dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
+    res += fv*v*dr;
+}
+return res;
+ }
+
+float Drum(float s, struct note *note, float rnd){ 
+    float dr;
+    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+    v *= fmax(0.01f, k);
+    return v * rnd;
+ }
+
+
+
+kernel void generation_kernel( __global float *dest,
+                               uint dst_len,
+                               __global struct note *notes,
+                               uint notes_len,
+                               __global int *opt,
+                               uint opt_beat_samples,
+                               uint opt_len
+)
+{
+    int s = get_global_id(0);
+
+    float rnd = random(100.0 * s / (float)dst_len) * 2.0 - 1.0;
+    //printf("%f\n", rnd);
+
+    float res = 0.0;
+
+    // iterate from notes
+    int beat = s / opt_beat_samples;
+    int note = 0, n;
+    while ((n = opt[beat * PARALLEL_CHANELS + note]) != -1)
+    {
+        if (notes[n].start <= s && s <= notes[n].end)
         {
-            float3 to_it = points[i].pos - points[id].pos;
-            if (length(to_it) > 0.000001)
+            switch (notes[n].tool)
             {
-                float3 dir = normalize(to_it);
-                float d = length(to_it);
+            case 0: res += PianoSolo(s, notes + n, rnd); break;
+case 1: res += PianoBass(s, notes + n, rnd); break;
+case 2: res += Drum(s, notes + n, rnd); break;
 
-                // apply gravitation:
-                force += dir * 0.01 * type_mass[points[id].type] * type_mass[points[i].type] / (d * d);
-
-                // apply charge:
-                force -= dir * 15.0 * type_charge[points[id].type] * type_charge[points[i].type] / (d * d);
-
-                // apply strong z
-                if (points[id].type ^ points[i].type == 2)
-                {
-                    force += dir * 150.0 * type_mass[points[id].type] * type_mass[points[i].type] / pow(d, 1.8);
-                    force -= dir * 200.0 * type_mass[points[id].type] * type_mass[points[i].type] / pow(d, 2.14);
-                }
-            }
-            else
-            {
-                int rid = (id * 125913) % 257 * 179;
-                float3 f = (float3)((float)(rid % 105 - 52), (float)(rid % 107 - 53), (float)(rid % 111 - 55));
-                force += f * 0.01;
+            default:
+                break;
             }
         }
+        note++;
     }
 
-    points[id].force = force;
-}
-
-
-kernel void phys_c( __global struct point *points, int points_len )
-{
-    /* move points */
-    int id = get_global_id(0);
-
-    float3 ppos = points[id].pos;
-    float this_mass = type_mass[points[id].type];
-    points[id].pos = 2.0 * points[id].pos - points[id].ppos + points[id].force / this_mass * delta_time_2;
-    points[id].ppos = ppos;
+    dest[s] = res;
+    return;
 }

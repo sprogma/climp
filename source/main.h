@@ -21,12 +21,14 @@ extern "C"
 
 void DLL_EXPORT kernel(
     float *dst,
-    size_t dst_len,
-    float *notes,
-    int   *tools,
-    int   *modes,
-    size_t notes_len,
-    int    base_freq
+    int dst_len,
+    // notes
+    int *tools,
+    float *times,
+    float *lengths,
+    float *freqs,
+    float *volumes,
+    int notes_len
 );
 
 #ifdef __cplusplus
