@@ -132,13 +132,26 @@ https://github.com/user-attachments/assets/bb81a053-cb84-4b79-b9d3-e678a4b98ee9
 
 # how to install 
 
+> [!CAUTION]
+> build of library is unaviable now.
+> you can build it manually (Good variant), or use pre built for Windows (Bad variant)
+
+
+> [!IMPORTANT]
+> This program needs library only if you want to listen your writed music in 'music writer'.
+> All other parts (music player and music processing) don't depend on it.
+
 * ### Windows
     1. build it with powershell:
         (run in repo directory)
         ```ps1
         .\install\windows.ps1
         ```
-    2. use result in 'build' directory. (run using python "code/music_player.py", "run.bat" or "run.ps1")
+        available flags:
+        (string) -buildDirectory "..."   - path and name of directory to install (default="./build")
+        (boolean) -buildLibrary          - if false, not try to build music generation library (default=$true)
+        (boolean) -usePreCompiledLibrary - if true, copy compiled library. Bad practice, but not need installed gcc/openCL/etc. (default=$false)
+    3. use result in 'build' directory. (run using python "code/music_player.py", "run.bat" or "run.ps1")
 * ### Linux
     test in plans (not implemented, see others part)
 * ### Others
