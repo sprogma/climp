@@ -643,20 +643,24 @@ class Application:
         if key in range(0x110000) and chr(key) in literals.printable:
             s = chr(key)
             if s == '\n':
-                # execute
                 log('text', 'MP> ' + self.d.console.string)
-                th = ExecutorThread(target=Executor,
-                                    args=(self, self.d.console.string, self.d.list.selected[self.d.list.album]),
-                                    daemon=True)
+                # if 'writer', open writer, else, execute
+                if self.d.console.string.strip() == "writer":
+                    self.d.music_gen.run()
+                else: 
+                    # execute
+                    th = ExecutorThread(target=Executor,
+                                        args=(self, self.d.console.string, self.d.list.selected[self.d.list.album]),
+                                        daemon=True)
+                    self.workers.append(th)
+                    th.start()
+                # update history
                 self.d.console.history_position = 0
                 self.d.console.history.insert(0, self.d.console.string)
                 while len(self.d.console.history) > self.d.console.history_length:
                     self.d.console.history.pop()
                 self.d.console.string = ''
                 self.d.console.string_saved = ''
-
-                self.workers.append(th)
-                th.start()
             elif s == '\t':
                 self.autocomplete()
             else:
@@ -918,6 +922,9 @@ class Application:
         os.environ.setdefault('ESCDELAY', '0')
         init_colors()
 
+        # link together files of project
+        lib_linkage()
+
         self.lw = self.w // 2
         self.rw = self.w - self.lw
         lsc = sc.subwin(self.h, self.lw, 0, 0)
@@ -970,16 +977,7 @@ class Application:
             history_length=100,
             history_position=0,
         )
-
-        lib_linkage()
-
-        x = music_gen.SynthesizerProject(climplib.kernel)
-        x.run()
-        #x.create('m')
-        #self.lists[self.d.list.album].add(x.x.sound)
-        #x = music_gen.TrackProject(climplib.kernel)
-        #x.create('t')
-        #self.lists[self.d.list.album].add(x.x.sound)
+        self.d.music_gen = music_gen.SynthesizerProject(climplib.kernel)
 
         self.listdir()
 
@@ -1365,17 +1363,25 @@ if __name__ == "__main__":
     path = __file__
     path = path[:max(path.rfind('/'), path.rfind('\\'))]
     path = path[:max(path.rfind('/'), path.rfind('\\'))]
-    climplib = ctypes.cdll.LoadLibrary(fr"{path}\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
-    climplib.kernel.argtypes = [
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
-        ctypes.c_size_t,
-        np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-        np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
-        ctypes.c_size_t,
-    ]
-    climplib.kernel.restype = ctypes.c_int
+    try:
+        climplib = ctypes.cdll.LoadLibrary(fr"{path}\bin\Windows\climp.dll")  # './bin/Windows/climp.dll'
+        climplib.kernel.argtypes = [
+            np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # res
+            ctypes.c_size_t,
+            np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+            np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+            np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+            np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+            np.ctypeslib.ndpointer(dtype=np.float32, ndim=1, flags='C_CONTIGUOUS'),  # notes
+            ctypes.c_size_t,
+        ]
+        climplib.kernel.restype = ctypes.c_int
+    except BaseException as e:
+        print(f"Error: {type(e)}{e}")
+        def kernel_banner(*args):
+            raise Exception("C library not found, or setup was failed.")
+        climplib=jsd(
+            kernel=kernel_banner
+        )
     app = Application()
     curses.wrapper(app.run)

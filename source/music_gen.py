@@ -74,7 +74,7 @@ class Generator:
         for i in self.inputs:
             i.time -= start_time
 
-    def compile(self):
+    def compile(self, log_fn):
         # sort data
         self.inputs.sort(key=lambda x: x.time)
 
@@ -98,8 +98,11 @@ class Generator:
             input_volumes[n] = self.inputs[n].volume
 
         # call
-        self.api_function(result, result_length, input_tools, input_times, input_lengths, input_frequencies, input_volumes, input_len)
-
+        try:
+            self.api_function(result, result_length, input_tools, input_times, input_lengths, input_frequencies, input_volumes, input_len)
+        except Exception as e:
+            log_fn(f"{e.__class__.__name__} [in api call]: {e}", c.log.error)
+        
         # return
         return result
 
@@ -1298,7 +1301,7 @@ class SynthesizerProject:
         code = code.replace("<TOOLS_SWITCH>", switch_code)
         with open("source/kernel.cl", "w") as file:
             file.write(code)
-        raw = self.x.compile()
+        raw = self.x.compile(self.log)
         # export track
         raw = np.tanh(raw)
         raw *= 32767.0
