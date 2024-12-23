@@ -1,9 +1,18 @@
 param(
     $buildDirectory = "./build",
-    $buildLibrary = $true
+    $buildLibrary = $true,
+    $usePreCompiledLibrary = $false
 )
 
 $global:buildLibrary = $buildLibrary
+if ($usePreCompiledLibrary)
+{
+    if ($global:buildLibrary)
+    {
+        Write-Warning "Warning, you cannot build Library, if you want to use pre compiled."
+    }
+    $global:buildLibrary = $false
+}
 
 
 # helping functions --------------------------------------------------------------------------------------------
@@ -223,8 +232,14 @@ function Prepare-Installation
     Copy-Item "./source/*.py" "$buildDirectory/code" | Out-Null
 
     # copy scripts
-    Write-LocalProgress "Copy scripts" 0.7
+    Write-LocalProgress "Copy scripts" 0.6
     Copy-Item "./install/run_scripts/win/*" "$buildDirectory" | Out-Null
+
+    if ($usePreCompiledLibrary)
+    {
+        Write-LocalProgress "Copy pre compiled library" 0.7
+        Copy-Item "./install/pre_compiled_library/win/*" "$buildDirectory/code" | Out-Null
+    }
 
     Write-LocalProgress "All copied" 1.0
 }
@@ -263,7 +278,7 @@ if ($global:buildLibrary)
     Build-SharedLibrary
     Write-Host "OK." -ForegroundColor "green"   
 }
-else
+elseif (!$usePreCompiledLibrary)
 {
     Write-Warning "Not building library..."
 }
