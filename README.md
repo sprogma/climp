@@ -4,7 +4,7 @@ Command Line Interface Music Player written with python and c + opencl
 # music player
 <table>
   <tr>
-    <td valign="top">![player1](https://github.com/user-attachments/assets/9854cb7d-acb8-4083-a156-9bd25a20c02d)</td>
+    <td valign="top">![player1](https://raw.githubusercontent.com/user-attachments/assets/9854cb7d-acb8-4083-a156-9bd25a20c02d)</td>
     <td valign="top">![player2](https://github.com/user-attachments/assets/b91541ef-5d0b-41f2-a391-2d18d7164697)</td>
     <td valign="top">![player3](https://github.com/user-attachments/assets/baf9ad02-491d-44dc-8203-4467f57dc34d)</td>
   </tr>
