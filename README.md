@@ -143,7 +143,7 @@ https://github.com/user-attachments/assets/bb81a053-cb84-4b79-b9d3-e678a4b98ee9
         ```ps1
         .\install\windows.ps1
         ```
-    2. use result in 'build' directory. (run using python "music_player.py", "music_player.bat" or "music_player.ps1")
+    2. use result in 'build' directory. (run using python "code/music_player.py", "run.bat" or "run.ps1")
 * ### Linux
     test in plans (not implemented, see others part)
 * ### Others
