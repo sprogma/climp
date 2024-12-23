@@ -4,9 +4,9 @@ Command Line Interface Music Player written with python and c + opencl
 # music player
 <table>
   <tr>
-    <td valign="top">![player1](examples/player1.png)</td>
-    <td valign="top">![player2](examples/player2.png)</td>
-    <td valign="top">![player3](https://github.com/user-attachments/assets/baf9ad02-491d-44dc-8203-4467f57dc34d)</td>
+    <td valign="top"> ![player1](examples/player1.png) </td>
+    <td valign="top"> ![player2](examples/player2.png) </td>
+    <td valign="top"> ![player3](examples/player3.png) </td>
   </tr>
  </table>
 
