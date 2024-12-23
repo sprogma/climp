@@ -3,22 +3,12 @@ Command Line Interface Music Player written with python and c + opencl
 
 # music player
 <table>
-<<<<<<< HEAD
     <tr>
         <td><img src="./examples/player1.png" alt="./examples/player1.png"></td>
         <td><img src="./examples/player2.png" alt="./examples/player2.png"></td>
         <td><img src="./examples/player3.png" alt="./examples/player3.png"></td>
     </tr>
 </table>
-
-=======
-  <tr>
-    <td valign="top"> ![player1](examples/player1.png) </td>
-    <td valign="top"> ![player2](examples/player2.png) </td>
-    <td valign="top"> ![player3](examples/player3.png) </td>
-  </tr>
- </table>
->>>>>>> ad4a7ffda4d87392399c539a35c9cc2a8ca9b4be
 
 
 * Tested only on Windows yet.
@@ -46,10 +36,31 @@ Command Line Interface Music Player written with python and c + opencl
 * Uses gpu to generate sound samples (fast).
 
 # music processing
+
+some examples of processed music
+
 <table>
     <tr>
-        <td>Original</td>
-        <td>Simple scaling (every n-th element)</td>
+        <td>Originals</td>
+    </tr>
+<tr><td>
+
+https://github.com/user-attachments/assets/c7946e4b-bf31-40be-b298-ac7aab174874
+
+</td><td>
+
+https://github.com/user-attachments/assets/0f515f60-85b4-410d-b825-98f3980cd2e4
+
+</td><td>
+
+https://github.com/user-attachments/assets/f8000325-fd84-4c22-8bd2-a0ba2c99d8a4
+
+</td></tr>
+</table>
+
+<table>
+    <tr>
+        <td>Simple scaling (every second sample)</td>
         <td>Reversing, using beat notes</td>
         <td>Tonal pitching (0.5x)</td>
         <td>Speed pitching (2x)</td>
@@ -57,10 +68,6 @@ Command Line Interface Music Player written with python and c + opencl
     </tr>
     <tr>
 <td>
-
-https://github.com/user-attachments/assets/c7946e4b-bf31-40be-b298-ac7aab174874
-
-</td><td>
 
 https://github.com/user-attachments/assets/3f9a29e2-6b92-481b-8953-137b9245d756
 
@@ -82,10 +89,6 @@ https://github.com/user-attachments/assets/baf971dc-d4ba-4789-9aa1-71230c7bc44b
 
 </td></tr><tr><td>
 
-https://github.com/user-attachments/assets/0f515f60-85b4-410d-b825-98f3980cd2e4
-
-</td><td>
-
 https://github.com/user-attachments/assets/70ad1cc2-8969-4421-a8fc-b0409ddfb781
 
 </td><td>
@@ -105,10 +108,6 @@ https://github.com/user-attachments/assets/f42671dc-550a-4cc5-8b24-1cf97ea75301
 https://github.com/user-attachments/assets/08435e53-9714-4005-80a3-289ce9181ed5
 
 </td></tr><tr><td>
-
-https://github.com/user-attachments/assets/f8000325-fd84-4c22-8bd2-a0ba2c99d8a4
-
-</td><td>
 
 https://github.com/user-attachments/assets/a85b9017-15ea-40a4-b1f6-a5cc358ca663
 
@@ -139,11 +138,18 @@ https://github.com/user-attachments/assets/bb81a053-cb84-4b79-b9d3-e678a4b98ee9
 # how to install 
 
 * ### Windows
-    build it with powershell:
-    ```ps1
-    ./install/windows.ps1
-    ```
-* 
+    1. build it with powershell:
+        (run in repo directory)
+        ```ps1
+        .\install\windows.ps1
+        ```
+    2. use result in 'build' directory. (run using python "music_player.py", "music_player.bat" or "music_player.ps1")
+* ### Linux
+    test in plans (not implemented, see others part)
+* ### Others
+    to build it alone:
+    1. Source python and c code located in 'source' directory. Run file 'music_player.py'
+    2. To use c library, build it as shared object, and connect in end of 'music_player.py', using ctypes
 
 ## depend on
 1. installed python (version 3.11 tested, but it maybe won't cause errors in some previous.)
