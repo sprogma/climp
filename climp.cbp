@@ -24,7 +24,6 @@
 				<Linker>
 					<Add option="-s" />
 					<Add option="-static" />
-					<Add option="-fopenmp" />
 					<Add library="user32" />
 					<Add library="../../OCL/bin/OpenCL.dll" />
 				</Linker>

@@ -3,3 +3,4 @@ obj
 *.layout
 __pycache__
 CppCheckResults.xml
+build

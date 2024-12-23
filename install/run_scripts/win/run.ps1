@@ -1,0 +1,1 @@
+python $PSScriptRoot\code\music_player.py
