@@ -1238,7 +1238,7 @@ class SynthesizerProject:
                                 v = eval(a[3].replace(":", "/"))
                             # calculate frequency
                             k = 0
-                            while k < len(f) and f[k].isalpha():
+                            while k < len(f) and not f[k].isdigit():
                                 k += 1
                             nt = f[:k]
                             nt = tone_pitch.get(nt, nt)

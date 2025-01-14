@@ -1,1 +1,1 @@
-python %~dp0.\code\music_player.py
+python %~dp0.\code\music_player.py %*

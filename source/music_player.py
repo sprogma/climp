@@ -1,8 +1,10 @@
 from collections import defaultdict
 import shlex
 import json
+import ast
 import string as literals
 import os
+import sys
 import random
 import re
 import pathlib
@@ -194,6 +196,7 @@ class Executor:
             for key, value in zip(self.app.d.console.function_keys[self.app.d.console.curr_function], self.d.function_args[self.app.d.console.curr_function]):
                 string = re.sub(r'\b' + key + r'\b', value, string)
 
+
         string = string.strip()
         if string.startswith('*'):
             lid = len(self.d.loops)
@@ -245,13 +248,20 @@ class Executor:
 
         if string.startswith('%'):
             try:
-                rng = string[1:string.find('%', 1)].split('-')
                 end = string.find('%', 1)
+                rng = string[1:end].split('-')
+                # apply loop index for range
+                for cc, r in enumerate(self.d.loops):
+                    v = len(self.d.loops) - cc  # 1 for last loop
+                    rng[0] = re.sub(rf'@{v}([^0-9]|$)', rf'{r}\g<1>', rng[0])
+                    rng[1] = re.sub(rf'@{v}([^0-9]|$)', rf'{r}\g<1>', rng[1])
+                rng[0] = int(ast.literal_eval(rng[0]))
+                rng[1] = int(ast.literal_eval(rng[1]))
                 lid = len(self.d.loops)
                 self.d.loops.append(0)
                 self.d.loops_ends.append(0)
-                self.d.loops_ends[lid] = int(rng[1])
-                for i in range(int(rng[0]), int(rng[1]) + 1):
+                self.d.loops_ends[lid] = rng[1]
+                for i in range(rng[0], rng[1] + 1):
                     self.d.loops[lid] = i
                     if 0 <= int(i) < len(self.app.lists[self.app.d.list.album].list):
                         self.selected = i
@@ -276,7 +286,7 @@ class Executor:
         # ----------------- loops macro indexes
         for cc, r in enumerate(self.d.loops):
             v = len(self.d.loops) - cc  # 1 for last loop
-            string = re.sub(rf'@{v}\b', f'{r}', string)
+            string = re.sub(rf'@{v}([^0-9]|$)', rf'{r}\g<1>', string)
 
         if '|' in string:
             sa, sb = string.split('|', 1)
@@ -334,6 +344,16 @@ class Executor:
             self.app.d.console.stop_execution = False
             log('error', 'execution stopped. (keyboard interrupt.)')
             return False
+
+        if string.startswith('"'):
+            try:
+                args = shlex.split(string)
+            except Exception as e:
+                log('error', f'bad load track: {e}')
+            for track in args:
+                self.app.load_track(track)
+            return True
+
         r = tuple(map(str.strip, string.split(maxsplit=1)))
         if not r:
             return True
@@ -589,6 +609,12 @@ class Application:
             if os.path.isdir(os.path.join(self.d.path, '..')):
                 self.d.path = os.path.abspath(os.path.normpath(os.path.join(self.d.path, '..')))
                 self.listdir()
+        if key == 460:
+            self.mode = MODE_CONSOLE
+            self.d.console.string += '"'
+        if key == 530:
+            self.mode = MODE_CONSOLE
+            self.d.console.string += "'"
         elif key == ord('e') or key == ord('у'):
             self.mode = MODE_CONSOLE
 
@@ -607,12 +633,19 @@ class Application:
         addstr(0, 1, self.d.path, c.path['focus' if self.focus == Application.FOCUS_LEFT else 'unfocus'])
         sc.hline(1, 0, '-', self.lw)
         sc.vline(0, 1, '|', self.h)
+        s = "MP> " + self.d.console.string
+        arr = []
+        comand_lines = 0
+        while s:
+            arr.append(s[:self.lw - 3])
+            s = s[self.lw - 3:]
+            comand_lines += 1
+        for y, i in enumerate(arr, self.h - 2 - len(arr)):
+            addstr(y, 2, i, c.console.text)
         # draw data
-        for line, i in enumerate(self.d.console.data):
-            line += self.d.console.height - len(self.d.console.data)
+        for line, i in enumerate(self.d.console.data, self.d.console.height - len(self.d.console.data) - comand_lines + 3):
             text, color = i
-            addstr(2 + line, 2, text, color)
-        addstr(self.h - 3, 2, "MP> " + self.d.console.string, c.console.text)
+            addstr(line, 2, text, color)
 
     def events_console_list(self, key):
         if key == 27:  # curses.KEY_ESCAPE
@@ -647,7 +680,7 @@ class Application:
                 # if 'writer', open writer, else, execute
                 if self.d.console.string.strip() == "writer":
                     self.d.music_gen.run()
-                else: 
+                else:
                     # execute
                     th = ExecutorThread(target=Executor,
                                         args=(self, self.d.console.string, self.d.list.selected[self.d.list.album]),
@@ -670,9 +703,6 @@ class Application:
                     self.d.console.string = self.d.console.string.rstrip()[:-1] + chr(key)
                 else:
                     self.d.console.string += chr(key)
-        while self.d.console.string and len(self.d.console.string) > self.lw - 6:
-            log("warn", "too long string.")
-            self.d.console.string = self.d.console.string[:-1]
 
     def clear_spectrogram(self):
         self.d.spectrogram.prev_pos = -1
@@ -980,6 +1010,10 @@ class Application:
         self.d.music_gen = music_gen.SynthesizerProject(climplib.kernel)
 
         self.listdir()
+
+        # load all files from sys.argv
+        for file in sys.argv[1:]:
+            self.load_track(file)
 
         while True:
             self.resize()
