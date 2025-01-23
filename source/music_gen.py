@@ -671,6 +671,23 @@ class SynthesizerProject:
                     self.d.music.track.play()
             else:
                 self.d.music.track.stop()
+        elif key in (ord('g'), ord("G")): # gamma
+            # update_tone_pitch
+            def gamma_string(s):
+                if not s.strip():
+                    return {}
+                a = s.split(';')
+                b = list(map(lambda x: x.split("->"), a))
+                c = dict(b)
+                return c
+            s = ";".join(map(lambda x: x[0] + "->" + x[1], self.configs.tone_pitch.items()))
+            p = self.get_input(gamma_string, info_string="Enter new gamma: (in format 'A->A#;C->C#;G->F#', using only C C# D D# E F F# G G# A A# B)", start_string=s)
+            if p is not None:
+                self.configs.tone_pitch = p
+        elif key in (ord('v'), ord("V")): # speed [velocity] of music
+            p = self.get_input(int, info_string="Enter new temp: (beats per second, integer)", start_string=str(self.configs.bps))
+            if p is not None:
+                self.configs.bps = p
         elif key in (ord('t'), ord('T')):
             self.tool_panel()
 
@@ -1216,10 +1233,15 @@ class SynthesizerProject:
                             # get instrument id [tool]
                             content = note.text
                             vv = vapp[tool]
-                            if content[-1] == '*':
+                            vl = 1.0
+                            if content[-1] == '+': # acsent + long
+                                vv *= 1.5
+                                vl *= 2.0
+                                content = content[:-1] # acsent
+                            elif content[-1] == '*':
                                 vv *= 1.5
                                 content = content[:-1]
-                            elif content[-1] == 'v':
+                            elif content[-1] == 'v': # no acsent
                                 vv *= 0.5
                                 content = content[:-1]
                             if content[0] == '-':
@@ -1241,13 +1263,16 @@ class SynthesizerProject:
                             while k < len(f) and not f[k].isdigit():
                                 k += 1
                             nt = f[:k]
-                            nt = tone_pitch.get(nt, nt)
+                            if nt.startswith("@"): # becare (not make tone pitch)
+                                nt = nt[1:]
+                            else:
+                                nt = tone_pitch.get(nt, nt)
                             nt = r.index(nt)
                             z = int(f[k:]) - 4
                             fq = 523.25 * pow(2, z + nt / 12)
 
                             volume_pitch = self.configs.kernel.tools[tool].configs.volume
-                            legato_mod = self.configs.kernel.tools[tool].configs.legato_mod
+                            legato_mod = self.configs.kernel.tools[tool].configs.legato_mod * vl
                             self.x.add(GeneratorTone(tool, tt * tempo_multipler, l * legato_mod * tempo_multipler, v * vv * volume_pitch, fq))
                             # add note's meta
                             note.meta = jsd(time = tt * tempo_multipler, length = l * tempo_multipler)
