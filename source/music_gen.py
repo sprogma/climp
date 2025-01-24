@@ -79,7 +79,7 @@ class Generator:
         self.inputs.sort(key=lambda x: x.time)
 
         # generate buffers
-        result_length = int(44100 * max(map(lambda i: i.time + i.length, self.inputs)))
+        result_length = int(128 + 44100 * max(map(lambda i: i.time + i.length, self.inputs)))
         result = np.zeros(result_length, dtype="float32")
 
         input_len = len(self.inputs)
@@ -126,6 +126,7 @@ class SynthesizerProjectTact:
     def __init__(self, time, tools_count):
         self.time = time
         self.notes: [[SynthesizerProjectNote]] = [[None] for i in range(tools_count)]
+        self.meta = jsd()
         # len(notes[i]) should be similar for all i
 
     def insert_column(self, column_id):
@@ -140,6 +141,7 @@ class SynthesizerProjectTact:
         d = {
             "time": self.time,
             "notes": list(map(lambda x: " ".join(map(lambda y: "" if y is None else y.text, x)),self.notes)),
+            "meta": self.meta
         }
         return json.dumps(d)
 
@@ -147,6 +149,8 @@ class SynthesizerProjectTact:
     def from_string(s, tools_count):
         d = json.loads(s)
         x = SynthesizerProjectTact(d["time"], tools_count)
+        if "meta" in d.keys():
+            x.meta = jsd(d["meta"])
         for i in range(tools_count):
             x.notes[i].clear() # remove 'Nones'
         for k, i in enumerate(d["notes"]):
@@ -469,7 +473,7 @@ class SynthesizerProject:
         return
 
     def draw_tacts(self):
-        line_height = 1+len(self.configs.kernel.tools)*2
+        line_height = 5+len(self.configs.kernel.tools)
         line_width_shift = 5
         line_width = self.w - 6
 
@@ -477,6 +481,21 @@ class SynthesizerProject:
         sel_y = math.inf
         x, y = 0, -self.d.visual.cy
         for tact_id, i in enumerate(self.tacts):
+            # draw tact meta:
+            if i.meta:
+                s = ""
+                if "tone_pitch" in i.meta:
+                    ss = ";".join(map(lambda x: f'{x[0]}->{x[1]}', i.meta.tone_pitch.items()))
+                    s += f"tone_pitch={ss}"
+                px, py = x, y
+                cpx = 0
+                while s.strip() and cpx < 50:
+                    ss = s[:self.w - px - 1 - line_width_shift]
+                    s = s[self.w - px - 1 - line_width_shift:]
+                    addstr(py, px + line_width_shift, ss, c.log.info)
+                    py += line_height
+                    px = 0
+                    cpx += 1
             px, py = x, y
             for note_column, notes in enumerate(zip(*i.notes)):
                 l = max(map(lambda i: 0 if i is None else len(i.text) - (1 if i.text and i.text[0] == '-' else 0), notes)) + 2
@@ -508,7 +527,7 @@ class SynthesizerProject:
                         else:
                             sh = 1
                             s = " " * l
-                        addstr(y+pos, x + line_width_shift + sh, s, color)
+                        addstr(y+pos+1, x + line_width_shift + sh, s, color)
                 # next notes
                 x += l
 
@@ -618,6 +637,17 @@ class SynthesizerProject:
                 filename = self.get_input(path_string_export, info_string="enter file to save [in wav format]")
                 if filename is not None:
                     self.export(filename)
+            # elif key == ord(curses.ascii.ctrl('g')): # export to glsl
+            #     def path_string_export(x):
+            #         if not os.path.exists(os.path.dirname(x)):
+            #             raise Exception(f"Path <{os.path.dirname(x)}> not exists")
+            #         s = os.path.normpath(x)
+            #         if not s.endswith('.glsl'):
+            #             s += ".glsl"
+            #         return s
+            #     filename = self.get_input(path_string_export, info_string="enter file to save [in glsl format]")
+            #     if filename is not None:
+            #         self.export_to_glsl(filename)
             elif self.d.mode == 'view':
                 self.events_view(key)
             elif self.d.mode == 'insert':
@@ -684,6 +714,20 @@ class SynthesizerProject:
             p = self.get_input(gamma_string, info_string="Enter new gamma: (in format 'A->A#;C->C#;G->F#', using only C C# D D# E F F# G G# A A# B)", start_string=s)
             if p is not None:
                 self.configs.tone_pitch = p
+        elif key in (ord('r'), ord("R")): # rythm
+            # update_tone_pitch
+            def get_rythm(s):
+                a = s.split('/')
+                a = tuple(map(int, a))
+                if len(a) != 2 or min(a) < 1:
+                    raise Exception("Error: too many '/' or one of values is zero, or less than zero")
+                return a
+            tact_size = self.configs.tact_size
+            tact_split = self.configs.tact_split
+            p = self.get_input(get_rythm, info_string="Enter new rythm (tact size) in format A/B (like 3/4 or 4/4)", start_string=f"{tact_split}/{tact_size}")
+            if p is not None:
+                self.configs.tact_size = p[0]
+                self.configs.tact_split = p[1]
         elif key in (ord('v'), ord("V")): # speed [velocity] of music
             p = self.get_input(int, info_string="Enter new temp: (beats per second, integer)", start_string=str(self.configs.bps))
             if p is not None:
@@ -880,6 +924,33 @@ class SynthesizerProject:
         elif key == ord(curses.ascii.ctrl('z')):
             self.d.visual.selection.recalculate_cy = True
             self.redo()
+        elif key == ord(curses.ascii.ctrl('g')): # edit meta
+            def meta_note(x):
+                x = x.split(' ', 1)
+                if x[0] == 'del':
+                    s = x[1].strip()
+                    if s not in self.tacts[self.d.visual.selection.pos].meta.keys():
+                        raise Exception(f"Error: this tact doesn't have <{s}>")
+                    return x[0], x[1].strip()
+                elif x[0] == 'tone_pitch':
+                    if not x[1].strip():
+                        return x[0], {}
+                    try:
+                        a = x[1].split(';')
+                        b = list(map(lambda y: y.split("->"), a))
+                        c = dict(b)
+                    except Exception as e:
+                        raise Exception("tone_pitch must be in format like 'A->A#;C->C#;G->F#' (str(e))")
+                    return x[0], c
+                else:
+                    raise Exception(f"Meta type <{x[0]}> not exists.")
+                return x
+            meta = self.get_input(meta_note, info_string="Edit meta: aviable 'tone_pitch'. to delete info use del <meta_name>")
+            if meta is not None:
+                if meta[0] == "del":
+                    self.tacts[self.d.visual.selection.pos].meta.pop(meta[1])
+                else:
+                    self.tacts[self.d.visual.selection.pos].meta[meta[0]] = meta[1]                
         elif key == ord(curses.ascii.ctrl('t')):
             self.d.visual.selection.recalculate_cy = True
             if self.d.music.playing:
@@ -1224,6 +1295,10 @@ class SynthesizerProject:
         vapp = [1.0] * len(self.configs.kernel.tools)
         for tact_id, tact in enumerate(self.tacts):
             try:
+                # read META
+                if "tone_pitch" in tact.meta.keys():
+                    tone_pitch = tact.meta.tone_pitch
+                # compile notes
                 for tool, notes in enumerate(tact.notes):
                     if not self.configs.kernel.tools[tool].configs.mute:
                         # add all notes
@@ -1339,6 +1414,69 @@ class SynthesizerProject:
         used_time += time.time()
         self.log(f"compiled. Used time: {used_time:.3f} s, {raw.shape[0]/1e6:.1f}M samples.", c.log.info)
         return raw
+    def export_to_glsl(self, filename):
+        self.x.inputs.clear()
+        res = self.generate_generator_tones()
+        if not res:
+            self.log("compilation terminated", c.log.error)
+            return
+        if not self.x.inputs:
+            self.log("Error: Empty notes (or all tools are muted.) Nothing to compile", c.log.error)
+            return
+        if True:
+            # parameters
+            split_time = 1.0
+            notes_on_split = 16
+            # create array_code
+            length = int(2 + max(map(lambda i: i.time + i.length, self.x.inputs)) / split_time)
+            array_define = "#define T(" + ",".join(map(lambda x: f"a{x},b{x},c{x},d{x},e{x}", range(1, notes_on_split+1))) + ")"
+            array_define += ",".join(map(lambda x: f"Xnote(a{x},b{x},c{x},d{x},e{x})", range(1, notes_on_split+1)))
+            array_define += "\n#define Z 0."
+            array_code = [array_define, f"Xnote array[{length*notes_on_split}] = Xnote[]("]
+            # sort data
+            self.x.inputs.sort(key=lambda x: x.time)
+            logged_error = 0
+            values = [[] for i in range(length)]
+            f = lambda x: f"{int(x + 0.5)}.0" if '.' not in f"{x:.6g}" else f"{x:.6g}"
+            # fill array
+            for n in self.x.inputs:
+                l = int(n.time / split_time)
+                r = int(1 + (n.time + n.length) / split_time)
+                for i in range(l, r + 1):
+                    values[i].append(f"{n.tool},{f(n.time)},{f(n.time + n.length)},{f(n.frequency)},{f(n.volume)}")
+            for i in range(length):
+                if len(values[i]) > notes_on_split:
+                    data = values[i][:notes_on_split]
+                    if not logged_error:
+                        self.log("Error: too many notes, to get full result increase notes_on_split value.")
+                        logged_error = 1
+                else:
+                    data = values[i] + ['-1,Z,Z,Z,Z'] * (notes_on_split - len(values[i]))
+                array_code.append(f"T({','.join(data)}),")
+            array_code[-1] = array_code[-1].rstrip(',')
+            array_code.append(");")
+            array_code = "\n".join(array_code)
+        # generate kernel code
+        with open("source/shadertoy_export.glsl") as file:
+            code = file.read()
+        # create kernel:
+        function_code = ""
+        switch_code = ""
+        # generate code
+        switch_code += ""
+        for id, t in enumerate(self.configs.kernel.tools):
+            fc = t.code
+            # apply some easy 'openCL kernel' to 'GLSL' rules
+            fc = fc.replace("->", ".")
+            # add function
+            switch_code += f"case {id}: res += {t.name}(s * 44100.0, array[beat * notes_on_split + n], rnd); break;\n"
+            function_code += f"float {t.name}(float s, in Xnote note, float rnd){{ {fc} }}\n\n"
+        # insert before kernel all
+        code = code.replace("<TOOLS_FUNCTION>", function_code)
+        code = code.replace("<TOOLS_SWITCH>", switch_code)
+        code = code.replace("<MAIN_ARRAY>", array_code)
+        with open(filename, "w") as file:
+            file.write(code)
 
     def resize(self):
         self.h, self.w = sc.getmaxyx()
