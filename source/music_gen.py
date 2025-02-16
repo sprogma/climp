@@ -487,6 +487,15 @@ class SynthesizerProject:
                 if "tone_pitch" in i.meta:
                     ss = ";".join(map(lambda x: f'{x[0]}->{x[1]}', i.meta.tone_pitch.items()))
                     s += f"tone_pitch={ss}"
+                if "tact_size" in i.meta:
+                    ss = f"{i.meta.tact_size[0]}/{i.meta.tact_size[1]}"
+                    s += f" tact_size={ss}"
+                if "temp" in i.meta:
+                    ss = f"{i.meta.temp} bps. ({name_by_temp_bps(i.meta.temp)})"
+                    s += f" temp={ss}"
+                if "volume" in i.meta:
+                    ss = ','.join(map(lambda x: '' if x is None else str(x), i.meta.volume))
+                    s += f" volume={ss}"
                 px, py = x, y
                 cpx = 0
                 while s.strip() and cpx < 50:
@@ -940,12 +949,45 @@ class SynthesizerProject:
                         b = list(map(lambda y: y.split("->"), a))
                         c = dict(b)
                     except Exception as e:
-                        raise Exception("tone_pitch must be in format like 'A->A#;C->C#;G->F#' (str(e))")
+                        raise Exception(f"tone_pitch must be in format like 'A->A#;C->C#;G->F#' ({e})")
                     return x[0], c
+                elif x[0] == 'tact_size':
+                    if not x[1].strip():
+                        raise Exception("Error: empty tact size. need format like 5/6 or 4/4")
+                    try:
+                        a = x[1].split('/',1)
+                        a = list(map(int, a))
+                    except Exception as e:
+                        raise Exception(f"tact_size: need format like '5/6' or '4/4' ({e})")
+                    if min(a) <= 0:
+                        raise Exception(f"tact_size must be positive fraction.")
+                    return x[0], a
+                elif x[0] == 'temp':
+                    if not x[1].strip():
+                        raise Exception("Error: empty temp. need positive integer.")
+                    try:
+                        a = int(x[1])
+                    except Exception as e:
+                        raise Exception(f"temp must be positive integer ({e})")
+                    if a <= 0:
+                        raise Exception(f"temp must be positive integer.")
+                    return x[0], a
+                elif x[0] == 'volume':
+                    if not x[1].strip():
+                        raise Exception("Error: empty volume. need sequence of positive floats.")
+                    try:
+                        a = tuple(map(lambda x: None if not x.strip() else float(x), x[1].split(',')))
+                    except Exception as e:
+                        raise Exception(f"volume must be float or empties (like 1.0,2.0,,,0.5) ({e})")
+                    if min(a) <= 0:
+                        raise Exception(f"volume must be not negative.")
+                    if len(a) != len(self.configs.kernel.tools):
+                        raise Exception(f"volume sequence must have {len(self.configs.kernel.tools)} values (got {len(a)})")
+                    return x[0], a
                 else:
                     raise Exception(f"Meta type <{x[0]}> not exists.")
                 return x
-            meta = self.get_input(meta_note, info_string="Edit meta: aviable 'tone_pitch'. to delete info use del <meta_name>")
+            meta = self.get_input(meta_note, info_string="Edit meta: aviable 'tone_pitch','tact_size','temp','volume'. to delete info use del <meta_name>")
             if meta is not None:
                 if meta[0] == "del":
                     self.tacts[self.d.visual.selection.pos].meta.pop(meta[1])
@@ -1063,10 +1105,16 @@ class SynthesizerProject:
                     ...
         def update_tacts_after_new_tool():
             for t in self.tacts:
+                if "volume" in t.meta:
+                    t.meta.volume += (None,)
                 t.notes.append([None] * t.length)
         def swap_tools(tid1, tid2):
             self.configs.kernel.tools[tid1], self.configs.kernel.tools[tid2] = self.configs.kernel.tools[tid2], self.configs.kernel.tools[tid1]
             for t in self.tacts:
+                if "volume" in t.meta:
+                    v = t.meta.volume
+                    v[tid2], v[tid1] = v[tid1], v[tid2]
+                    t.meta.volume = tuple(v)
                 t.notes[tid2], t.notes[tid1] = t.notes[tid1], t.notes[tid2]
         def name_request_string(x):
             x = x.strip().replace(" ", "_")
@@ -1280,17 +1328,18 @@ class SynthesizerProject:
         tone_pitch = self.configs.tone_pitch
         tact_size = self.configs.tact_size
         tact_split = self.configs.tact_split
-        tempo_multipler = 60.0 / tact_split / self.configs.bps
+        tempo_multipler = 60.0 / self.configs.bps
 
         r = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        # start time
-        t = 0.0
         # remove empty notes
         for i in self.tacts:
             for n in i.notes:
                 for ii in range(len(n)):
                     if n[ii] is not None and not n[ii].text.strip():
                         n[ii] = None
+
+        # start variables
+        curr_time = 0.0
         # for all notes:
         vapp = [1.0] * len(self.configs.kernel.tools)
         for tact_id, tact in enumerate(self.tacts):
@@ -1298,12 +1347,20 @@ class SynthesizerProject:
                 # read META
                 if "tone_pitch" in tact.meta.keys():
                     tone_pitch = tact.meta.tone_pitch
+                if "tact_size" in tact.meta.keys():
+                    tact_size, tact_split = tact.meta.tact_size
+                if "temp" in tact.meta.keys():
+                    tempo_multipler = 60.0 / tact.meta.temp
+                if "volume" in tact.meta.keys():
+                    for tool, i in enumerate(tact.meta.volume):
+                        if i != None:
+                            vapp[tool] = i
                 # compile notes
                 for tool, notes in enumerate(tact.notes):
                     if not self.configs.kernel.tools[tool].configs.mute:
                         # add all notes
-                        prev_len, prev_volume = 1.0, 1.0
-                        tt = t
+                        prev_raw_len, prev_len, prev_volume = 1.0, 1.0, 1.0
+                        tt = curr_time
                         for note in filter(lambda x: x is not None and x.text.strip(), notes):
                             # get instrument id [tool]
                             content = note.text
@@ -1324,13 +1381,13 @@ class SynthesizerProject:
                                 content = content[1:]
                             # parse content
                             a = content.split('/')
-                            f, l, v = "A", prev_len, prev_volume
+                            f, l, v = "A", prev_raw_len, prev_volume
                             if len(a) >= 1:
                                 f = a[0]
                             if len(a) >= 2 and a[1]:
                                 l = eval(a[1].replace(":", "/"))
                             if len(a) >= 3 and a[2]:
-                                tt = t + eval(a[2].replace(":", "/"))
+                                tt = curr_time + eval(a[2].replace(":", "/")) / tact_split * tempo_multipler
                             if len(a) >= 4 and a[3]:
                                 v = eval(a[3].replace(":", "/"))
                             # calculate frequency
@@ -1346,12 +1403,13 @@ class SynthesizerProject:
                             z = int(f[k:]) - 4
                             fq = 523.25 * pow(2, z + nt / 12)
 
+                            l_raw, l = l, l / tact_split * tempo_multipler
                             volume_pitch = self.configs.kernel.tools[tool].configs.volume
                             legato_mod = self.configs.kernel.tools[tool].configs.legato_mod * vl
-                            self.x.add(GeneratorTone(tool, tt * tempo_multipler, l * legato_mod * tempo_multipler, v * vv * volume_pitch, fq))
+                            self.x.add(GeneratorTone(tool, tt, l * legato_mod, v * vv * volume_pitch, fq))
                             # add note's meta
-                            note.meta = jsd(time = tt * tempo_multipler, length = l * tempo_multipler)
-                            prev_len, prev_volume = l, v
+                            note.meta = jsd(time = tt, length = l)
+                            prev_raw_len, prev_len, prev_volume = l_raw, l, v
                             tt += l
             except Exception as e:
                 self.log(f"Error: {e}", c.log.error)
@@ -1360,7 +1418,7 @@ class SynthesizerProject:
                 self.d.visual.selection.tool = None
                 self.d.visual.recalculate_cy = True
                 return False
-            t += tact_size * tact_split
+            curr_time += tact_size * tempo_multipler
         return True
 
     def compile(self, compilation_start_time=0.0):
@@ -1414,6 +1472,7 @@ class SynthesizerProject:
         used_time += time.time()
         self.log(f"compiled. Used time: {used_time:.3f} s, {raw.shape[0]/1e6:.1f}M samples.", c.log.info)
         return raw
+        
     def export_to_glsl(self, filename):
         self.x.inputs.clear()
         res = self.generate_generator_tones()
