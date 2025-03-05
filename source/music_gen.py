@@ -26,7 +26,6 @@ import tempfile
 import subprocess
 
 
-"""
 addstr = None
 c = None
 sc = None
@@ -34,7 +33,7 @@ lsc = None
 rsc = None
 log = None
 jsd = None
-"""
+
 
 def name_by_temp_bps(bps):
     return ("grave" if 0 <= bps <= 44 else
@@ -149,13 +148,18 @@ class SynthesizerProjectTact:
     def from_string(s, tools_count):
         d = json.loads(s)
         x = SynthesizerProjectTact(d["time"], tools_count)
+        if len(x.notes) != tools_count:
+            x.notes = x.nores[:tools_count]
         if "meta" in d.keys():
             x.meta = jsd(d["meta"])
         for i in range(tools_count):
             x.notes[i].clear() # remove 'Nones'
         for k, i in enumerate(d["notes"]):
+            if k >= tools_count:
+                continue
             for ii in i.split(" "):
                 if ii == "":
+                    print(x.notes, k)
                     x.notes[k].append(None)
                 else:
                     x.notes[k].append(SynthesizerProjectNote(ii))
@@ -646,17 +650,17 @@ class SynthesizerProject:
                 filename = self.get_input(path_string_export, info_string="enter file to save [in wav format]")
                 if filename is not None:
                     self.export(filename)
-            # elif key == ord(curses.ascii.ctrl('g')): # export to glsl
-            #     def path_string_export(x):
-            #         if not os.path.exists(os.path.dirname(x)):
-            #             raise Exception(f"Path <{os.path.dirname(x)}> not exists")
-            #         s = os.path.normpath(x)
-            #         if not s.endswith('.glsl'):
-            #             s += ".glsl"
-            #         return s
-            #     filename = self.get_input(path_string_export, info_string="enter file to save [in glsl format]")
-            #     if filename is not None:
-            #         self.export_to_glsl(filename)
+            elif key == ord(curses.ascii.ctrl('r')): # export to glsl
+                def path_string_export(x):
+                    if not os.path.exists(os.path.dirname(x)):
+                        raise Exception(f"Path <{os.path.dirname(x)}> not exists")
+                    s = os.path.normpath(x)
+                    if not s.endswith('.glsl'):
+                        s += ".glsl"
+                    return s
+                filename = self.get_input(path_string_export, info_string="enter file to save [in glsl format]")
+                if filename is not None:
+                    self.export_to_glsl(filename)
             elif self.d.mode == 'view':
                 self.events_view(key)
             elif self.d.mode == 'insert':
@@ -1482,39 +1486,52 @@ class SynthesizerProject:
         if not self.x.inputs:
             self.log("Error: Empty notes (or all tools are muted.) Nothing to compile", c.log.error)
             return
-        if True:
-            # parameters
-            split_time = 1.0
-            notes_on_split = 16
-            # create array_code
-            length = int(2 + max(map(lambda i: i.time + i.length, self.x.inputs)) / split_time)
-            array_define = "#define T(" + ",".join(map(lambda x: f"a{x},b{x},c{x},d{x},e{x}", range(1, notes_on_split+1))) + ")"
-            array_define += ",".join(map(lambda x: f"Xnote(a{x},b{x},c{x},d{x},e{x})", range(1, notes_on_split+1)))
-            array_define += "\n#define Z 0."
-            array_code = [array_define, f"Xnote array[{length*notes_on_split}] = Xnote[]("]
-            # sort data
-            self.x.inputs.sort(key=lambda x: x.time)
-            logged_error = 0
-            values = [[] for i in range(length)]
-            f = lambda x: f"{int(x + 0.5)}.0" if '.' not in f"{x:.6g}" else f"{x:.6g}"
-            # fill array
-            for n in self.x.inputs:
-                l = int(n.time / split_time)
-                r = int(1 + (n.time + n.length) / split_time)
-                for i in range(l, r + 1):
-                    values[i].append(f"{n.tool},{f(n.time)},{f(n.time + n.length)},{f(n.frequency)},{f(n.volume)}")
-            for i in range(length):
-                if len(values[i]) > notes_on_split:
-                    data = values[i][:notes_on_split]
-                    if not logged_error:
-                        self.log("Error: too many notes, to get full result increase notes_on_split value.")
-                        logged_error = 1
-                else:
-                    data = values[i] + ['-1,Z,Z,Z,Z'] * (notes_on_split - len(values[i]))
-                array_code.append(f"T({','.join(data)}),")
-            array_code[-1] = array_code[-1].rstrip(',')
-            array_code.append(");")
-            array_code = "\n".join(array_code)
+
+        # sort inputs
+        self.x.inputs.sort(key=lambda x: x.time)
+
+        arr_len = len(self.x.inputs)
+        
+        if arr_len > 1750:
+            # show error
+            self.log(f"Error: Too long music. {arr_len:.1f}/{1700:.1f} notes. Music cut. (becouse shadertoy falls).", c.log.warn)
+            arr_len = 1750
+            
+        max_time = max(map(lambda x: x.time + x.length, self.x.inputs[:arr_len]))
+
+        timestep = 0.5
+        length_accuracy = 60.0
+            
+        if max_time > 16000 / 60:
+            # show error
+            self.log(f"Error: Too long music. {max_time:.1f}/{16000/60:.1f} s. Music accuracy decreased.", c.log.warn)
+            length_accuracy = 30.0
+            
+            
+        # export notes to arr
+        arr_def = "Cnote arr[] = Cnote[](\n"
+        arr_dat = []
+        for n in self.x.inputs[:arr_len]:
+            # encode note:
+            #define ENCODE(t,s,e,f,v) Cnote(uint(t) + 16u * (uint(s*30.0 + 0.5) + 16000u * uint(e*30.0 + 0.5)), uint(v * 60.0 + 0.5) + 60u * uint(f * 3000.0 + 0.5))
+            a = n.tool + 16 * (int(n.time * length_accuracy + 0.5) + 16000 * int((n.time + n.length) * length_accuracy + 0.5))
+            b = int(n.volume * 60 + 0.5) + 60 * int(n.frequency * 3000 + 0.5)
+            arr_dat.append(f"C(0x{a:x}u,0x{b:x}u)" + ("\n" if len(arr_dat) % 3 == 2 else ""))
+        if arr_dat:
+            arr_dat[-1] = arr_dat[-1].replace("C(", "Cnote(")
+        arr_def += "".join(arr_dat)
+        arr_def += ");"
+        # export optimizing array
+        segments = int(max_time / timestep) + 1
+        min_dat = [arr_len - 1 for i in range(segments)]
+        for cc, i in enumerate(self.x.inputs[:arr_len]):
+            min_dat[int((i.time + i.length) / timestep)] = min(min_dat[int((i.time + i.length) / timestep)], cc)
+        for i in range(segments - 2, -1, -1):
+            min_dat[i] = min(min_dat[i + 1], min_dat[i])
+        # generate min_def
+        min_def = "int min_arr[] = int[]("
+        min_def += ','.join(map(lambda x: x[1] + ('\n' if x[0] % 24 == 23 else ''), enumerate(map(str, min_dat))))
+        min_def += ");"
         # generate kernel code
         with open("source/shadertoy_export.glsl") as file:
             code = file.read()
@@ -1522,18 +1539,30 @@ class SynthesizerProject:
         function_code = ""
         switch_code = ""
         # generate code
-        switch_code += ""
-        for id, t in enumerate(self.configs.kernel.tools):
+        sp = " " * 12
+        for tid, t in enumerate(self.configs.kernel.tools):
             fc = t.code
             # apply some easy 'openCL kernel' to 'GLSL' rules
             fc = fc.replace("->", ".")
+            fc = fc.replace("(float)(", "float(")
+            fc = fc.replace("(float) (", "float(")
+            fc = fc.replace("(int)(", "int(")
+            fc = fc.replace("(int) (", "int(")
+            fc = fc.replace("fabs(", "abs(")
+            fc = fc.replace("fmax(", "max(")
+            fc = fc.replace("= {", "= float[](")
+            fc = fc.replace("};", ");")
+            fc = re.sub(r',([\s\n]*)\)', r'\g<1>)', fc)
+            fc = re.sub(r'sizeof\((.*?)\) / sizeof\((.*?)\)', r'\g<1>.length()', fc)
             # add function
-            switch_code += f"case {id}: res += {t.name}(s * 44100.0, array[beat * notes_on_split + n], rnd); break;\n"
-            function_code += f"float {t.name}(float s, in Xnote note, float rnd){{ {fc} }}\n\n"
+            switch_code += sp + f"case {tid}: res += {t.name}(time * 44100.0, x, random(time)); break;\n"
+            function_code += f"float {t.name}(in float s, in Xnote note, in float rnd){{ {fc} }}\n\n"
         # insert before kernel all
-        code = code.replace("<TOOLS_FUNCTION>", function_code)
-        code = code.replace("<TOOLS_SWITCH>", switch_code)
-        code = code.replace("<MAIN_ARRAY>", array_code)
+        code = code.replace("#TIME_STEP", f"#define TIME_STEP {timestep:.1f}")
+        code = code.replace("#LENGTH_ACCURACY", f"#define LENGTH_ACCURACY {length_accuracy:.1f}")
+        code = code.replace("#TOOLS_DECLARATION", function_code)
+        code = code.replace("#CHECK_DECLARATION", switch_code)
+        code = code.replace("#MUSIC_DECLARATION", arr_def + "\n" + min_def)
         with open(filename, "w") as file:
             file.write(code)
 

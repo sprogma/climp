@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "D:\C\git\climp\source\music_player.py", line 1421, in <module>
+    curses.wrapper(app.run)
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\curses\__init__.py", line 94, in wrapper
+    return func(stdscr, *args, **kwds)
+  File "D:\C\git\climp\source\music_player.py", line 1021, in run
+    self.events()
+  File "D:\C\git\climp\source\music_player.py", line 533, in events
+    if not self.workers[i].result:
+AttributeError: 'ExecutorThread' object has no attribute 'result'

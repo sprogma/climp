@@ -26,8 +26,12 @@ float PianoSolo(float s, struct note *note, float rnd){
         0.0025,
         0.001
     };
-    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-    v *= fmax(0.01f, k);
+
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
     
     float res = 0.0, dr;
     for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
@@ -59,8 +63,12 @@ float freq[] = {
     0.015,
     0.6,
 };
-float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-v *= fmax(0.01f, k);
+
+float v = note->volume;
+float x = (float)(s - note->start) / 44100.0f;
+float l = (float)(note->end - note->start) / 44100.0f;
+float k = tanh(400.0*x) * cos(x * 3.1415926 * 0.5 / l);
+v *= k;
 
 float res = 0.0, dr;
 for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
@@ -71,13 +79,6 @@ for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
     res += fv*v*dr;
 }
 return res;
- }
-
-float Drum(float s, struct note *note, float rnd){ 
-    float dr;
-    float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
-    v *= fmax(0.01f, k);
-    return v * rnd;
  }
 
 
@@ -109,7 +110,6 @@ kernel void generation_kernel( __global float *dest,
             {
             case 0: res += PianoSolo(s, notes + n, rnd); break;
 case 1: res += PianoBass(s, notes + n, rnd); break;
-case 2: res += Drum(s, notes + n, rnd); break;
 
             default:
                 break;
