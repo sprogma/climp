@@ -16,6 +16,16 @@ float random(float time) {
     return fract(sin(time * 78.233) * 43758.5453123, &_);
 }
 
+float wave(float time) {
+    return sin(time * 3.1415926f * 2.0f);
+}
+
+float saw(float time) {
+    float _;
+    float x = fract(time, &_);
+    return fabs(x * 2.0f - 1.0f) * 2.0f - 1.0f;
+}
+
 <TOOLS_FUNCTION>
 
 kernel void generation_kernel( __global float *dest,

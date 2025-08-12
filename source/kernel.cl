@@ -16,17 +16,17 @@ float random(float time) {
     return fract(sin(time * 78.233) * 43758.5453123, &_);
 }
 
-float PianoSolo(float s, struct note *note, float rnd){ 
-    float freq[] = {
-        1.0,
-        0.5,
-        0.2,
-        0.05,
-        0.1,
-        0.0025,
-        0.001
-    };
+float wave(float time) {
+    return sin(time * 3.1415926f * 2.0f);
+}
 
+float saw(float time) {
+    float _;
+    float x = fract(time, &_);
+    return fabs(x * 2.0f - 1.0f) * 2.0f - 1.0f;
+}
+
+float PianoLeg(float s, struct note *note, float rnd){ 
     float v = note->volume;
     float x = (float)(s - note->start) / 44100.0f;
     float l = (float)(note->end - note->start) / 44100.0f;
@@ -34,51 +34,145 @@ float PianoSolo(float s, struct note *note, float rnd){
     v *= k;
     
     float res = 0.0, dr;
-    for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
     {
-        float f = note->frequency * (fqid + 1);
-        float fv = freq[fqid];
-        dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-        res += fv*v*dr;
+        dr = wave(s * note->frequency / 44100.0f);
+        res += dr * 0.66;
+        dr = wave(s * note->frequency / 44100.0f * 0.5);
+        res += dr * 0.33;
     }
-    return res;
-         }
+    return res * v;
+ }
+
+float PianoSolo(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+    
+    float res = 0.0, dr;
+    {
+        dr = wave(s * note->frequency / 44100.0f);
+        res += dr * 0.66;
+        dr = wave(s * note->frequency / 44100.0f * 0.5);
+        res += dr * 0.33;
+    }
+    return res * v;
+ }
+
+float SawSolo(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float res = 0.0, dr;
+    {
+        dr = saw(s * note->frequency / 44100.0f);
+        dr = dr * dr * dr;
+        res += dr * 0.66;
+        dr = saw(s * note->frequency / 44100.0f * 0.5);
+        dr = dr * dr * dr;
+        res += dr * 0.33;
+    }
+    return res * v;
+ }
+
+float PSolo(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float dr;
+    {
+        dr = clamp(wave(s * note->frequency / 44100.0f) * 20.0, -1.0, 1.0);
+    }
+    return v*dr;
+ }
+
+float WaveSaw(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float res = 0.0, dr;
+    {
+        float x;
+        x = s * note->frequency / 44100.0f;
+        dr = wave(x) * saw(x) * saw(x) * 4.488;
+        res += dr * 0.66;
+        x = s * note->frequency / 44100.0f * 0.5;
+        dr = wave(x) * saw(x) * saw(x) * 4.488;
+        res += dr * 0.33;
+    }
+    return res * v;
+ }
 
 float PianoBass(float s, struct note *note, float rnd){ 
-float freq[] = {
-    0.5,
-    0.6,
-    0.05,
-    0.7,
-    0.05,
-    0.25,
-    0.15,
-    0.8,
-    0.015,
-    0.005,
-    0.015,
-    0.1,
-    0.015,
-    0.005,
-    0.015,
-    0.6,
-};
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
 
-float v = note->volume;
-float x = (float)(s - note->start) / 44100.0f;
-float l = (float)(note->end - note->start) / 44100.0f;
-float k = tanh(400.0*x) * cos(x * 3.1415926 * 0.5 / l);
-v *= k;
+    float res = 0.0, dr;
+    {
+        dr = wave(s * note->frequency / 44100.0f);
+        res += dr * 0.66;
+        dr = wave(s * note->frequency / 44100.0f * 0.5);
+        res += dr * 0.33;
+    }
+    return res * v;
+ }
 
-float res = 0.0, dr;
-for (int fqid = 0; fqid < sizeof(freq) / sizeof(*freq); ++fqid)
-{
-    float f = note->frequency * (fqid + 1) * 0.125;
-    float fv = freq[fqid];
-    dr = sin(s * f / 44100.0f * 0.5 * 3.1415926 * 2.0);
-    res += fv*v*dr;
-}
-return res;
+float SawBass(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float res = 0.0, dr;
+    {
+        dr = saw(s * note->frequency / 44100.0f);
+        res += dr * 0.66;
+        dr = saw(s * note->frequency / 44100.0f * 0.5);
+        res += dr * 0.33;
+    }
+    return res * v;
+ }
+
+float PBass(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float dr;
+    {
+        dr = clamp(wave(s * note->frequency / 44100.0f) * 20.0, -1.0, 1.0);
+    }
+    return v*dr;
+ }
+
+float Bass(float s, struct note *note, float rnd){ 
+    float v = note->volume;
+    float x = (float)(s - note->start) / 44100.0f;
+    float l = (float)(note->end - note->start) / 44100.0f;
+    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    v *= k;
+
+    float dr;
+    {
+        dr = wave(s * note->frequency / 44100.0f);
+    }
+    return v*dr * 2.0;
  }
 
 
@@ -108,8 +202,15 @@ kernel void generation_kernel( __global float *dest,
         {
             switch (notes[n].tool)
             {
-            case 0: res += PianoSolo(s, notes + n, rnd); break;
-case 1: res += PianoBass(s, notes + n, rnd); break;
+            case 0: res += PianoLeg(s, notes + n, rnd); break;
+case 1: res += PianoSolo(s, notes + n, rnd); break;
+case 2: res += SawSolo(s, notes + n, rnd); break;
+case 3: res += PSolo(s, notes + n, rnd); break;
+case 4: res += WaveSaw(s, notes + n, rnd); break;
+case 5: res += PianoBass(s, notes + n, rnd); break;
+case 6: res += SawBass(s, notes + n, rnd); break;
+case 7: res += PBass(s, notes + n, rnd); break;
+case 8: res += Bass(s, notes + n, rnd); break;
 
             default:
                 break;
