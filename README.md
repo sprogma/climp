@@ -19,6 +19,7 @@ Command Line Interface Music Player written with python and c + opencl
 * Explorer screen to find music.
 * Simple console to music loading, listening and processing, supporting async tasks, cycles (for mass processing), functions, etc.
 * Saving processed tracks in wav format
+* Using pygame (sdl) to play audio.
 
 # music writer
 <table>
