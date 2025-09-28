@@ -175,6 +175,42 @@ float Bass(float s, struct note *note, float rnd){
     return v*dr * 2.0;
  }
 
+float Drum(float s, struct note *note, float rnd){ 
+    /* check type of note -> select drum type */
+    if (fabs(note->frequency - 440.0 / 4) < 0.1)
+    {    
+        float dr;
+        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+        v *= fmax(0.01f, k);
+        return v * rnd;
+    }
+    else if (fabs(note->frequency - 440.0 / 2) < 0.1)
+    {
+        float dr;
+        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+        v *= fmax(0.01f, k);
+        s = floor(s / 4.0);
+        return 1.15 * v * (random(s / 44100.0) * 2.0 - 1.0);
+    }
+    else if (fabs(note->frequency - 440.0 / 1) < 0.1)
+    {
+        float dr;
+        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+        v *= fmax(0.01f, k);
+        s = floor(s / 16.0);
+        return 1.3 * v * (random(s / 44100.0) * 2.0 - 1.0);
+    }
+    else if (fabs(note->frequency - 440.0 * 2.0) < 0.1)
+    {
+        float dr;
+        float v = note->volume, k = 1.0f - (float)(s - note->start) / (float)(note->end - note->start);
+        v *= fmax(0.01f, k);
+        s = floor(s / 32.0);
+        return 1.3 * v * (random(s / 44100.0) * 2.0 - 1.0);
+    }
+    return 0;
+ }
+
 
 
 kernel void generation_kernel( __global float *dest,
@@ -211,6 +247,7 @@ case 5: res += PianoBass(s, notes + n, rnd); break;
 case 6: res += SawBass(s, notes + n, rnd); break;
 case 7: res += PBass(s, notes + n, rnd); break;
 case 8: res += Bass(s, notes + n, rnd); break;
+case 9: res += Drum(s, notes + n, rnd); break;
 
             default:
                 break;
