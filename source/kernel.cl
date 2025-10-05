@@ -134,7 +134,7 @@ float SawBass(float s, struct note *note, float rnd){
     float v = note->volume;
     float x = (float)(s - note->start) / 44100.0f;
     float l = (float)(note->end - note->start) / 44100.0f;
-    float k = tanh(1000.0*x) * cos(x * 3.1415926 * 0.5 / l);
+    float k = tanh(500.0*x) * cos(x * 3.1415926 * 0.5 / l);
     v *= k;
 
     float res = 0.0, dr;
